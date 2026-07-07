@@ -46,7 +46,7 @@ export function getFirebaseErrorMessage(error: unknown) {
   }
 
   if (code === "permission-denied" || message.includes("permission-denied")) {
-    return "Firestore rejected this request. Check that the Firestore database exists and the included firestore.rules have been deployed.";
+    return "Firestore rejected this request. Confirm firestore.rules are deployed and that your canonical users/{auth.uid} document has role developer, dev, organizer, or admin.";
   }
 
   if (code === "unavailable" || message.includes("client is offline")) {
@@ -129,7 +129,10 @@ export async function subscribeToFirebaseAppData(onData: (data: FirebaseAppData)
     onSnapshot(
       collection(firestore, "users"),
       (snapshot) => {
-        data.users = snapshot.docs.map((item) => item.data() as User);
+        data.users = snapshot.docs.map((item) => {
+          const user = item.data() as User;
+          return { ...user, uid: item.id };
+        });
         emit();
       },
       fail
@@ -177,6 +180,11 @@ export async function saveFirebaseEvent(event: Event) {
 export async function saveFirebaseParticipant(eventId: string, participant: Participant) {
   const { doc, setDoc } = await import("firebase/firestore");
   return setDoc(doc(await getFirebaseDb(), "participants", participant.id), { ...participant, eventId }, { merge: true });
+}
+
+export async function deleteFirebaseParticipant(participantId: string) {
+  const { deleteDoc, doc } = await import("firebase/firestore");
+  return deleteDoc(doc(await getFirebaseDb(), "participants", participantId));
 }
 
 export async function saveFirebaseScorecard(scorecard: Scorecard) {

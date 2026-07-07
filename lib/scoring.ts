@@ -1,4 +1,4 @@
-import type { Criterion, Event, RubricLevel, Scorecard } from "@/lib/types";
+import type { Criterion, Event, Participant, RubricLevel, Scorecard } from "@/lib/types";
 
 const rubricTemplates: Array<Pick<RubricLevel, "label" | "description">> = [
   { label: "A", description: "Exceptional" },
@@ -82,5 +82,38 @@ export function buildScorecard(event: Event, scorecard: Scorecard) {
 }
 
 export function criterionWeightLabel(criterion: Criterion) {
-  return `x${criterion.weight.toFixed(1)} · max ${criterion.maxPoints}`;
+  return `x${criterion.weight.toFixed(1)} max ${criterion.maxPoints}`;
+}
+
+export function getScorecardsForStandings(event: Event, scorecards: Scorecard[]) {
+  if (!event.dropHighestAndLowestJudgeScores || scorecards.length < 3) {
+    return scorecards;
+  }
+
+  const sortedByRawScore = [...scorecards].sort((left, right) => {
+    const leftScore = calculateTotals(event, left.scores).rawScore;
+    const rightScore = calculateTotals(event, right.scores).rawScore;
+
+    if (leftScore !== rightScore) return leftScore - rightScore;
+    return left.updatedAt.localeCompare(right.updatedAt);
+  });
+
+  return sortedByRawScore.slice(1, -1);
+}
+
+export function buildLeaderboardRow(event: Event, participant: Participant, scorecards: Scorecard[]) {
+  const weightedMaxPerJudge = event.criteria.reduce((sum, criterion) => sum + criterion.maxPoints * criterion.weight, 0);
+  const scorecardsForStandings = getScorecardsForStandings(event, scorecards);
+  const totalRaw = scorecardsForStandings.reduce((sum, card) => sum + calculateTotals(event, card.scores).rawScore, 0);
+  const maxScore = scorecardsForStandings.length * weightedMaxPerJudge;
+  const averageScore = maxScore === 0 ? 0 : (totalRaw / maxScore) * 100;
+
+  return {
+    participant,
+    scorecardCount: scorecardsForStandings.length,
+    averageScore,
+    rawScore: totalRaw,
+    maxScore,
+    criteriaAverages: {}
+  };
 }

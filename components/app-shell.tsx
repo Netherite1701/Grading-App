@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { buildStandingsCsv } from "@/lib/export";
+import React, { useEffect, useRef, useState } from "react";
+import { buildParticipantTemplateCsv, buildStandingsCsv, parseParticipantsCsv } from "@/lib/export";
 import {
+  deleteFirebaseParticipant,
   getFirebaseErrorMessage,
   isFirebaseConfigured,
   normalizeRole,
@@ -17,7 +18,7 @@ import {
   upsertAuthenticatedUser
 } from "@/lib/firebase";
 import { demoEvents, demoParticipants, demoScorecards, demoUsers, hydrateScorecards } from "@/lib/mock-data";
-import { calculateTotals, clampScore, createRubricLevels, getDefaultScores, getRubricLevelForScore } from "@/lib/scoring";
+import { buildLeaderboardRow, calculateTotals, clampScore, createRubricLevels, getDefaultScores, getRubricLevelForScore } from "@/lib/scoring";
 import {
   editableCopyKeys,
   getAppCopy,
@@ -37,7 +38,8 @@ const developerTabs = [
   { id: "judge", labelKey: "judgeViewTab" },
   { id: "organizer", labelKey: "organizerViewTab" },
   { id: "standings", labelKey: "standingsViewTab" },
-  { id: "developer", labelKey: "developerToolsTab" }
+  { id: "developer", labelKey: "developerToolsTab" },
+  { id: "translations", labelKey: "translationsTab" }
 ] as const;
 
 type SectionId = (typeof developerTabs)[number]["id"];
@@ -91,7 +93,7 @@ function createDefaultCriterion(): Criterion {
   };
 }
 
-function createDraftEvent(owner: User | null, draft?: Partial<Pick<Event, "name" | "description" | "status" | "gradingType" | "criteria">>): Event {
+function createDraftEvent(owner: User | null, draft?: Partial<Pick<Event, "name" | "description" | "status" | "gradingType" | "dropHighestAndLowestJudgeScores" | "criteria">>): Event {
   const now = new Date().toISOString();
   const name = draft?.name?.trim() || "Untitled Event";
   const description = draft?.description?.trim() || "New event draft";
@@ -101,6 +103,7 @@ function createDraftEvent(owner: User | null, draft?: Partial<Pick<Event, "name"
     description,
     status: draft?.status ?? "draft",
     gradingType: draft?.gradingType ?? "rubric",
+    dropHighestAndLowestJudgeScores: draft?.dropHighestAndLowestJudgeScores ?? false,
     ownerId: owner?.uid ?? "demo-owner",
     ownerEmail: owner?.email ?? "demo@local",
     criteria: draft?.criteria?.length ? draft.criteria : [createDefaultCriterion()],
@@ -109,17 +112,51 @@ function createDraftEvent(owner: User | null, draft?: Partial<Pick<Event, "name"
   };
 }
 
+function createCsvFileName(name: string, suffix: string) {
+  const safeName = name.trim().toLowerCase().replace(/[^a-z0-9가-힣]+/g, "-").replace(/^-+|-+$/g, "") || "event";
+  return `${safeName}-${suffix}.csv`;
+}
+
+function downloadCsvFile(fileName: string, csv: string) {
+  if (typeof document === "undefined") return;
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const canUseBlobUrl = typeof URL !== "undefined" && typeof URL.createObjectURL === "function";
+  const url = canUseBlobUrl ? URL.createObjectURL(blob) : `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  if (canUseBlobUrl) {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function readCsvFile(file: File) {
+  if (typeof file.text === "function") {
+    return file.text();
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("The CSV file could not be read."));
+    reader.readAsText(file);
+  });
+}
+
 export function AppShell({ initialUser }: AppShellProps) {
   const firebaseAvailable = isFirebaseConfigured();
   const demoDeveloper = demoUsers.find((user) => normalizeRole(user.role) === "developer") ?? null;
-  const [language, setLanguage] = useState<AppLanguage>(() => {
-    if (typeof window === "undefined") return "en";
-    const stored = window.localStorage.getItem("grading-program-language");
-    return stored === "ko" ? "ko" : "en";
-  });
-  const [translationOverrides, setTranslationOverrides] = useState<TranslationOverrides>(() => loadTranslationOverrides());
+  const [language, setLanguage] = useState<AppLanguage>("ko");
+  const [translationOverrides, setTranslationOverrides] = useState<TranslationOverrides>({});
   const [translationEditorLanguage, setTranslationEditorLanguage] = useState<AppLanguage>("ko");
   const [translationSearch, setTranslationSearch] = useState("");
+  const [hasLoadedBrowserPreferences, setHasLoadedBrowserPreferences] = useState(false);
   const copy = getAppCopy(language, translationOverrides[language]);
   const [authUser, setAuthUser] = useState<User | null>(initialUser === undefined && !firebaseAvailable ? demoDeveloper : initialUser ?? null);
   const [authStatus, setAuthStatus] = useState<string>(firebaseAvailable ? copy.checkingSession : copy.demoMode);
@@ -135,9 +172,18 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [organizerDescription, setOrganizerDescription] = useState(initialEvents[0]?.description ?? "");
   const [organizerStatus, setOrganizerStatus] = useState<EventStatus>(initialEvents[0]?.status ?? "draft");
   const [organizerGradingType, setOrganizerGradingType] = useState<GradingType>(initialEvents[0]?.gradingType ?? "rubric");
+  const [organizerTrimExtremes, setOrganizerTrimExtremes] = useState(initialEvents[0]?.dropHighestAndLowestJudgeScores ?? false);
   const [newParticipantName, setNewParticipantName] = useState("");
   const [newParticipantTitle, setNewParticipantTitle] = useState("");
+  const [editingParticipantId, setEditingParticipantId] = useState("");
+  const [editingParticipantName, setEditingParticipantName] = useState("");
+  const [editingParticipantTitle, setEditingParticipantTitle] = useState("");
+  const [participantCsvText, setParticipantCsvText] = useState("");
+  const [participantImportMessage, setParticipantImportMessage] = useState("");
+  const [eventCreateMessage, setEventCreateMessage] = useState("");
   const [section, setSection] = useState<SectionId>(defaultSectionForRole(normalizeRole(authUser?.role)));
+  const [expandedCriterionId, setExpandedCriterionId] = useState<string | null>(initialEvents[0]?.criteria[0]?.id ?? null);
+  const optimisticEventsRef = useRef<Event[]>([]);
 
   const role = normalizeRole(authUser?.role);
   const isDeveloper = role === "developer";
@@ -154,19 +200,27 @@ export function AppShell({ initialUser }: AppShellProps) {
   );
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedLanguage = window.localStorage.getItem("grading-program-language");
+    setLanguage(storedLanguage === "en" ? "en" : "ko");
+    setTranslationOverrides(loadTranslationOverrides());
+    setHasLoadedBrowserPreferences(true);
+  }, []);
+
+  useEffect(() => {
     if (typeof document !== "undefined") {
       document.documentElement.lang = language;
     }
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && hasLoadedBrowserPreferences) {
       window.localStorage.setItem("grading-program-language", language);
     }
-  }, [language]);
+  }, [language, hasLoadedBrowserPreferences]);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && hasLoadedBrowserPreferences) {
       window.localStorage.setItem("grading-program-translation-overrides", JSON.stringify(translationOverrides));
     }
-  }, [translationOverrides]);
+  }, [translationOverrides, hasLoadedBrowserPreferences]);
 
   const persistFirebaseWrite = async (write: () => Promise<unknown>) => {
     if (!firebaseAvailable) return;
@@ -229,8 +283,17 @@ export function AppShell({ initialUser }: AppShellProps) {
 
     void subscribeToFirebaseAppData(
       (data) => {
-        const nextEvents = data.events.length ? data.events : initialEvents;
-        const nextParticipantsByEvent = data.events.length ? data.participantsByEvent : demoParticipants;
+        const remoteEvents = data.events.length ? data.events : initialEvents;
+        const remoteEventIds = new Set(remoteEvents.map((event) => event.id));
+        const pendingEvents = optimisticEventsRef.current.filter((event) => !remoteEventIds.has(event.id));
+        optimisticEventsRef.current = pendingEvents;
+        const nextEvents = [...pendingEvents, ...remoteEvents];
+        const nextParticipantsByEvent = {
+          ...(data.events.length ? data.participantsByEvent : demoParticipants)
+        };
+        pendingEvents.forEach((event) => {
+          nextParticipantsByEvent[event.id] = nextParticipantsByEvent[event.id] ?? [];
+        });
         const nextScorecards = data.events.length ? hydrateScorecards(nextEvents, data.scorecards) : initialScorecards;
 
         setUsers(data.users.length ? data.users : demoUsers);
@@ -275,21 +338,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const summary = activeEvent ? calculateTotals(activeEvent, draftScores) : undefined;
   const leaderboard = activeEvent
     ? participants
-        .map((participant) => {
-          const participantCards = scorecards.filter((card) => card.eventId === activeEvent.id && card.participantId === participant.id);
-          const totalRaw = participantCards.reduce((sum, card) => sum + calculateTotals(activeEvent, card.scores).rawScore, 0);
-          const maxScore = participantCards.length * activeEvent.criteria.reduce((sum, criterion) => sum + criterion.maxPoints * criterion.weight, 0);
-          const averageScore = maxScore === 0 ? 0 : (totalRaw / maxScore) * 100;
-
-          return {
-            participant,
-            scorecardCount: participantCards.length,
-            averageScore,
-            rawScore: totalRaw,
-            maxScore,
-            criteriaAverages: {}
-          };
-        })
+        .map((participant) => buildLeaderboardRow(activeEvent, participant, scorecards.filter((card) => card.eventId === activeEvent.id && card.participantId === participant.id)))
         .sort((a, b) => b.averageScore - a.averageScore)
     : [];
 
@@ -348,6 +397,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     setOrganizerDescription(event.description ?? "");
     setOrganizerStatus(event.status);
     setOrganizerGradingType(event.gradingType);
+    setOrganizerTrimExtremes(event.dropHighestAndLowestJudgeScores ?? false);
   };
 
   const selectParticipant = (participantId: string) => {
@@ -371,7 +421,12 @@ export function AppShell({ initialUser }: AppShellProps) {
     const scorecard = nextParticipantId ? getJudgeScorecard(activeEvent.id, nextParticipantId, judgeId, scorecards) : undefined;
     setDraftScores(scorecard?.scores ?? getDefaultScores(activeEvent.criteria));
     setNotes(scorecard?.notes ?? "");
-  }, [activeEventId, activeEvent?.updatedAt]);
+  }, [activeEventId]);
+
+  useEffect(() => {
+    if (!activeEvent) return;
+    setExpandedCriterionId((current) => (activeEvent.criteria.some((criterion) => criterion.id === current) ? current : activeEvent.criteria[0]?.id ?? null));
+  }, [activeEventId, activeEvent?.criteria.length]);
 
   const updateSelectedEvent = (eventId: string) => {
     const nextEvent = events.find((event) => event.id === eventId);
@@ -399,15 +454,28 @@ export function AppShell({ initialUser }: AppShellProps) {
       description: organizerDescription,
       status: organizerStatus,
       gradingType: organizerGradingType,
+      dropHighestAndLowestJudgeScores: organizerTrimExtremes,
       criteria: activeEvent?.criteria.map((criterion) => ({ ...criterion })) ?? [createDefaultCriterion()]
     });
+    optimisticEventsRef.current = [nextEvent, ...optimisticEventsRef.current.filter((event) => event.id !== nextEvent.id)];
     setEvents((current) => [nextEvent, ...current]);
     setParticipantsByEvent((current) => ({ ...current, [nextEvent.id]: [] }));
     setActiveEventId(nextEvent.id);
     setSelectedParticipantId("");
     setDraftScores(getDefaultScores(nextEvent.criteria));
     syncEventForm(nextEvent);
-    void persistFirebaseWrite(() => saveFirebaseEvent(nextEvent));
+    setEventCreateMessage(firebaseAvailable ? copy.eventCreateSaving : copy.eventCreateSaved);
+    void (async () => {
+      if (!firebaseAvailable) return;
+      try {
+        await saveFirebaseEvent(nextEvent);
+        setEventCreateMessage(copy.eventCreateSaved);
+      } catch (error) {
+        const message = getFirebaseErrorMessage(error);
+        setAuthError(message);
+        setEventCreateMessage(copy.eventCreateFailed.replace("{error}", message));
+      }
+    })();
   };
 
   const updateCriterion = (criterionId: string, patch: Partial<Criterion>) => {
@@ -458,6 +526,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       updatedAt: new Date().toISOString()
     };
     setEvents((current) => current.map((event) => (event.id === activeEvent.id ? nextEvent : event)));
+    setExpandedCriterionId(nextCriterion.id);
     void persistFirebaseWrite(() => saveFirebaseEvent(nextEvent));
   };
 
@@ -506,6 +575,100 @@ export function AppShell({ initialUser }: AppShellProps) {
     void persistFirebaseWrite(() => saveFirebaseParticipant(activeEvent.id, nextParticipant));
   };
 
+  const startEditingParticipant = (participant: Participant) => {
+    setEditingParticipantId(participant.id);
+    setEditingParticipantName(participant.name);
+    setEditingParticipantTitle(participant.title ?? "");
+  };
+
+  const cancelEditingParticipant = () => {
+    setEditingParticipantId("");
+    setEditingParticipantName("");
+    setEditingParticipantTitle("");
+  };
+
+  const saveParticipantEdits = () => {
+    if (!activeEvent || !canOrganize || !editingParticipantId || !editingParticipantName.trim()) return;
+    const currentParticipant = participants.find((participant) => participant.id === editingParticipantId);
+    if (!currentParticipant) return;
+
+    const updatedAt = new Date().toISOString();
+    const nextParticipant: Participant = {
+      ...currentParticipant,
+      id: editingParticipantId,
+      name: editingParticipantName.trim(),
+      title: editingParticipantTitle.trim() || undefined,
+      updatedAt
+    };
+
+    setParticipantsByEvent((current) => ({
+      ...current,
+      [activeEvent.id]: (current[activeEvent.id] ?? []).map((participant) => (participant.id === editingParticipantId ? nextParticipant : participant))
+    }));
+    cancelEditingParticipant();
+    void persistFirebaseWrite(() => saveFirebaseParticipant(activeEvent.id, nextParticipant));
+  };
+
+  const deleteParticipant = (participantId: string) => {
+    if (!activeEvent || !canOrganize) return;
+
+    const nextParticipants = participants.filter((participant) => participant.id !== participantId);
+    setParticipantsByEvent((current) => ({
+      ...current,
+      [activeEvent.id]: nextParticipants
+    }));
+    setScorecards((current) => current.filter((card) => !(card.eventId === activeEvent.id && card.participantId === participantId)));
+    setSelectedParticipantId((current) => (current === participantId ? nextParticipants[0]?.id ?? "" : current));
+    if (editingParticipantId === participantId) {
+      cancelEditingParticipant();
+    }
+    void persistFirebaseWrite(() => deleteFirebaseParticipant(participantId));
+  };
+
+  const applyParticipantCsv = (csv: string) => {
+    if (!activeEvent || !canOrganize) return;
+    const result = parseParticipantsCsv(csv, participants);
+    const errorText = result.errors.length
+      ? ` ${copy.participantImportErrors.replace("{errors}", result.errors.slice(0, 3).join(" ")).trim()}`
+      : "";
+
+    if (!result.participants.length) {
+      setParticipantImportMessage(result.errors.join(" ") || copy.participantImportErrors.replace("{errors}", "No valid team rows found."));
+      return;
+    }
+
+    setParticipantsByEvent((current) => ({
+      ...current,
+      [activeEvent.id]: [...(current[activeEvent.id] ?? []), ...result.participants]
+    }));
+    setSelectedParticipantId(result.participants[0].id);
+    setParticipantImportMessage(`${copy.participantsImported.replace("{count}", String(result.participants.length))}${errorText}`);
+    setParticipantCsvText("");
+    void Promise.all(result.participants.map((participant) => persistFirebaseWrite(() => saveFirebaseParticipant(activeEvent.id, participant))));
+  };
+
+  const importParticipantsFromCsv = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!activeEvent || !canOrganize) return;
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+
+    try {
+      applyParticipantCsv(await readCsvFile(file));
+      event.currentTarget.value = "";
+    } catch (error) {
+      setParticipantImportMessage(error instanceof Error ? error.message : copy.participantImportErrors.replace("{errors}", "The CSV could not be read."));
+    }
+  };
+
+  const downloadParticipantTemplate = () => {
+    downloadCsvFile("participant-template.csv", buildParticipantTemplateCsv());
+  };
+
+  const downloadResultsCsv = () => {
+    if (!activeEvent) return;
+    downloadCsvFile(createCsvFileName(activeEvent.name, "results"), buildStandingsCsv(activeEvent, participants, scorecards));
+  };
+
   const saveOrganizerChanges = () => {
     if (!activeEvent || !canOrganize) return;
     const nextEvent = {
@@ -514,6 +677,7 @@ export function AppShell({ initialUser }: AppShellProps) {
       description: organizerDescription,
       status: organizerStatus,
       gradingType: organizerGradingType,
+      dropHighestAndLowestJudgeScores: organizerTrimExtremes,
       updatedAt: new Date().toISOString()
     };
     setEvents((current) =>
@@ -865,10 +1029,11 @@ export function AppShell({ initialUser }: AppShellProps) {
                       <h2>{copy.eventBuilder}</h2>
                       <p>{copy.eventBuilderDesc}</p>
                     </div>
-                    <button className="button" onClick={createEvent}>
+                    <button type="button" className="button" onClick={createEvent}>
                       {copy.createEvent}
                     </button>
                   </div>
+                  {eventCreateMessage ? <div className="footer-note">{eventCreateMessage}</div> : null}
                   <div className="grid-2">
                     <div>
                       <label className="label" htmlFor="event-name">
@@ -911,54 +1076,86 @@ export function AppShell({ initialUser }: AppShellProps) {
                       </select>
                     </div>
                   </div>
+                  <div className="criterion-card">
+                    <div className="criterion-top">
+                      <div>
+                        <strong>{copy.trimExtremeScores}</strong>
+                        <span>{copy.trimExtremeScoresDesc}</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        aria-label={copy.trimExtremeScores}
+                        checked={organizerTrimExtremes}
+                        onChange={(event) => setOrganizerTrimExtremes(event.target.checked)}
+                      />
+                    </div>
+                  </div>
                   <div className="criteria-list">
-                    {activeEvent.criteria.map((criterion) => (
+                    {activeEvent.criteria.map((criterion, index) => {
+                      const isExpanded = expandedCriterionId === criterion.id;
+
+                      return (
                       <div className="criterion-card" key={criterion.id}>
-                        <div className="grid-2">
-                          <div>
-                            <label className="label" htmlFor={`${criterion.id}-name`}>
-                              {copy.criterionName}
-                            </label>
-                            <input id={`${criterion.id}-name`} className="field" value={criterion.name} onChange={(event) => updateCriterion(criterion.id, { name: event.target.value })} />
+                        <button
+                          type="button"
+                          className="criterion-toggle"
+                          aria-expanded={isExpanded}
+                          aria-label={`${isExpanded ? copy.collapseCriterion : copy.expandCriterion} ${index + 1}: ${criterion.name}`}
+                          onClick={() => setExpandedCriterionId((current) => (current === criterion.id ? null : criterion.id))}
+                        >
+                          <div className="criterion-toggle-copy">
+                            <strong>{criterion.name}</strong>
+                            <span>{copy.criterionSummary(criterion.maxPoints, criterion.weight)}</span>
                           </div>
-                          <div>
-                            <label className="label" htmlFor={`${criterion.id}-description`}>
-                              {copy.criterionDescription}
-                            </label>
-                            <input
-                              id={`${criterion.id}-description`}
-                              className="field"
-                              value={criterion.description ?? ""}
-                              onChange={(event) => updateCriterion(criterion.id, { description: event.target.value })}
-                            />
-                          </div>
-                        </div>
-                          <div className="grid-2" style={{ marginTop: 12 }}>
+                          <span className="badge indigo">{isExpanded ? copy.collapseCriterion : copy.expandCriterion}</span>
+                        </button>
+                        {isExpanded ? (
+                          <div className="criterion-details">
+                            <div className="grid-2">
+                              <div>
+                                <label className="label" htmlFor={`${criterion.id}-name`}>
+                                  {copy.criterionName}
+                                </label>
+                                <input id={`${criterion.id}-name`} className="field" value={criterion.name} onChange={(event) => updateCriterion(criterion.id, { name: event.target.value })} />
+                              </div>
+                              <div>
+                                <label className="label" htmlFor={`${criterion.id}-description`}>
+                                  {copy.criterionDescription}
+                                </label>
+                                <input
+                                  id={`${criterion.id}-description`}
+                                  className="field"
+                                  value={criterion.description ?? ""}
+                                  onChange={(event) => updateCriterion(criterion.id, { description: event.target.value })}
+                                />
+                              </div>
+                            </div>
+                            <div className="grid-2" style={{ marginTop: 12 }}>
                             <div>
                               <label className="label" htmlFor={`${criterion.id}-max`}>
                                 {copy.maxPoints}
                               </label>
-                            <input
-                              id={`${criterion.id}-max`}
-                              className="field"
-                              type="number"
-                              min={1}
-                              value={criterion.maxPoints}
-                              onChange={(event) => updateCriterion(criterion.id, { maxPoints: Math.max(1, Number(event.target.value)) })}
-                            />
+                              <input
+                                id={`${criterion.id}-max`}
+                                className="field"
+                                type="number"
+                                min={1}
+                                value={criterion.maxPoints}
+                                onChange={(event) => updateCriterion(criterion.id, { maxPoints: Math.max(1, Number(event.target.value)) })}
+                              />
                             </div>
                             <div>
                               <label className="label" htmlFor={`${criterion.id}-weight`}>
-                              {copy.weightMultiplier}
+                                {copy.weightMultiplier}
                               </label>
-                            <input
-                              id={`${criterion.id}-weight`}
-                              className="field"
-                              type="number"
-                              min={1}
-                              max={10}
-                              value={criterion.weight}
-                              onChange={(event) => updateCriterion(criterion.id, { weight: Math.max(1, Math.min(10, Number(event.target.value))) })}
+                              <input
+                                id={`${criterion.id}-weight`}
+                                className="field"
+                                type="number"
+                                min={1}
+                                max={10}
+                                value={criterion.weight}
+                                onChange={(event) => updateCriterion(criterion.id, { weight: Math.max(1, Math.min(10, Number(event.target.value))) })}
                               />
                             </div>
                           </div>
@@ -990,14 +1187,17 @@ export function AppShell({ initialUser }: AppShellProps) {
                               </div>
                             </div>
                           ) : null}
-                        </div>
-                      ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      );
+                    })}
                   </div>
                   <div className="button-row">
-                    <button className="button secondary" onClick={addCriterion}>
+                    <button type="button" className="button secondary" onClick={addCriterion}>
                       {copy.addCriterion}
                     </button>
-                    <button className="button" onClick={saveOrganizerChanges}>
+                    <button type="button" className="button" onClick={saveOrganizerChanges}>
                       {copy.saveEvent}
                     </button>
                   </div>
@@ -1023,7 +1223,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                     </div>
                     <div className="metric">
                       <span>{copy.scoringMode}</span>
-                      <strong>{organizerGradingType === "rubric" ? "Rubric" : "Direct"}</strong>
+                      <strong>{organizerGradingType === "rubric" ? copy.rubricScaleOption : copy.directScore}</strong>
                     </div>
                   </div>
                   <div className="criterion-card">
@@ -1056,18 +1256,113 @@ export function AppShell({ initialUser }: AppShellProps) {
                       </button>
                     </div>
                   </div>
-                  <div className="criteria-list">
-                    {participants.map((participant) => (
-                      <div className="criterion-card" key={participant.id}>
-                        <div className="criterion-top">
-                          <div>
-                            <strong>{participant.name}</strong>
-                            <span>{participant.title}</span>
-                          </div>
-                          <span className="badge emerald">{copy.ready}</span>
-                        </div>
+                  <div className="criterion-card">
+                    <div className="section-header">
+                      <div>
+                        <h2>{copy.importParticipantsCsv}</h2>
+                        <p>{copy.importParticipantsCsvDesc}</p>
                       </div>
-                    ))}
+                    </div>
+                    <div className="grid-2">
+                      <div>
+                        <label className="label" htmlFor="participant-csv">
+                          {copy.csvFile}
+                        </label>
+                        <input id="participant-csv" className="field" type="file" accept=".csv,text/csv" onChange={importParticipantsFromCsv} />
+                      </div>
+                      <div className="button-row" style={{ alignItems: "end" }}>
+                        <button className="button secondary" onClick={downloadParticipantTemplate}>
+                          {copy.downloadParticipantTemplate}
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      <label className="label" htmlFor="participant-csv-text">
+                        {copy.pasteParticipantsCsv}
+                      </label>
+                      <textarea
+                        id="participant-csv-text"
+                        className="textarea"
+                        value={participantCsvText}
+                        onChange={(event) => setParticipantCsvText(event.target.value)}
+                        placeholder={'"Team name","Project title","Description"\n"Team Example","Project Example","Optional notes"'}
+                      />
+                    </div>
+                    <div className="button-row" style={{ marginTop: 12 }}>
+                      <button className="button secondary" onClick={() => applyParticipantCsv(participantCsvText)} disabled={!participantCsvText.trim()}>
+                        {copy.importPastedCsv}
+                      </button>
+                    </div>
+                    {participantImportMessage ? <div className="footer-note" style={{ marginTop: 8 }}>{participantImportMessage}</div> : null}
+                  </div>
+                  <div className="criteria-list">
+                    <div className="section-header" style={{ marginBottom: 0 }}>
+                      <div>
+                        <h2>{copy.teamRoster}</h2>
+                        <p>{copy.teamRosterDesc}</p>
+                      </div>
+                    </div>
+                    {participants.map((participant) => {
+                      const isEditing = editingParticipantId === participant.id;
+
+                      return (
+                        <div className="criterion-card" key={participant.id}>
+                          {isEditing ? (
+                            <div className="stack">
+                              <div className="grid-2">
+                                <div>
+                                  <label className="label" htmlFor={`edit-team-name-${participant.id}`}>
+                                    {copy.teamName}
+                                  </label>
+                                  <input
+                                    id={`edit-team-name-${participant.id}`}
+                                    className="field"
+                                    aria-label={`${copy.teamName} (${copy.editTeam})`}
+                                    value={editingParticipantName}
+                                    onChange={(event) => setEditingParticipantName(event.target.value)}
+                                  />
+                                </div>
+                                <div>
+                                  <label className="label" htmlFor={`edit-team-title-${participant.id}`}>
+                                    {copy.projectTitle}
+                                  </label>
+                                  <input
+                                    id={`edit-team-title-${participant.id}`}
+                                    className="field"
+                                    aria-label={`${copy.projectTitle} (${copy.editTeam})`}
+                                    value={editingParticipantTitle}
+                                    onChange={(event) => setEditingParticipantTitle(event.target.value)}
+                                  />
+                                </div>
+                              </div>
+                              <div className="button-row">
+                                <button type="button" className="button" onClick={saveParticipantEdits} disabled={!editingParticipantName.trim()}>
+                                  {copy.saveTeam}
+                                </button>
+                                <button type="button" className="button secondary" onClick={cancelEditingParticipant}>
+                                  {copy.cancelEdit}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="criterion-top">
+                              <div>
+                                <strong>{participant.name}</strong>
+                                <span>{participant.title}</span>
+                              </div>
+                              <div className="button-row">
+                                <button type="button" className="button secondary" onClick={() => startEditingParticipant(participant)}>
+                                  {copy.editTeam}
+                                </button>
+                                <button type="button" className="button warn" onClick={() => deleteParticipant(participant.id)}>
+                                  {copy.deleteTeam}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -1082,7 +1377,12 @@ export function AppShell({ initialUser }: AppShellProps) {
                     <h2>{copy.standings}</h2>
                     <p>{copy.standingsDesc}</p>
                   </div>
-                  {role === "guest" ? <span className="badge amber">{copy.viewOnly}</span> : null}
+                  <div className="button-row">
+                    <button className="button secondary" onClick={downloadResultsCsv}>
+                      {copy.downloadResultsCsv}
+                    </button>
+                    {role === "guest" ? <span className="badge amber">{copy.viewOnly}</span> : null}
+                  </div>
                 </div>
                 <div className="podium">
                   {podium.map((row, index) => (
@@ -1189,72 +1489,88 @@ export function AppShell({ initialUser }: AppShellProps) {
                 <div className="panel-inner stack">
                   <div className="section-header">
                     <div>
-                      <h2>Translation editor</h2>
-                      <p>Edit browser-local UI text overrides.</p>
-                    </div>
-                    <button className="button secondary" onClick={() => resetLanguageOverrides(translationEditorLanguage)}>
-                      Reset language
-                    </button>
-                  </div>
-                  <div className="grid-2">
-                    <div>
-                      <label className="label" htmlFor="translation-language">
-                        Edit language
-                      </label>
-                      <select id="translation-language" className="select" value={translationEditorLanguage} onChange={(event) => setTranslationEditorLanguage(event.target.value as AppLanguage)}>
-                        {languageOptions.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="label" htmlFor="translation-search">
-                        Search translations
-                      </label>
-                      <input
-                        id="translation-search"
-                        className="field"
-                        value={translationSearch}
-                        onChange={(event) => setTranslationSearch(event.target.value)}
-                        placeholder="Search by key or text"
-                      />
+                      <h2>{copy.eventManagement}</h2>
+                      <p>{copy.eventManagementDesc}</p>
                     </div>
                   </div>
-                  <div className="criteria-list">
-                    {visibleTranslationKeys.map((key) => {
-                      const baseValue = translationBaseCopy[key];
-                      const currentValue = translationOverrideValues[key] ?? baseValue;
-                      const isEdited = currentValue !== baseValue;
-                      const fieldId = `translation-${translationEditorLanguage}-${key}`;
+                  <button className="button" onClick={() => setSection("organizer")}>
+                    {copy.openEventBuilder}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
-                      return (
-                        <div className="criterion-card" key={key}>
-                          <div className="criterion-top">
-                            <div>
-                              <strong>{key}</strong>
-                              <span>{isEdited ? "Edited" : "Default"}</span>
-                            </div>
-                            <button className="button secondary" onClick={() => resetTranslationOverride(translationEditorLanguage, key)} disabled={!isEdited}>
-                              Reset
-                            </button>
-                          </div>
-                          <label className="label" htmlFor={fieldId} style={{ marginTop: 12 }}>
-                            Current text
-                          </label>
-                          <textarea
-                            id={fieldId}
-                            className="textarea"
-                            value={currentValue}
-                            aria-label={`Translation ${translationEditorLanguage} ${key}`}
-                            onChange={(event) => updateTranslationOverride(translationEditorLanguage, key, event.target.value)}
-                          />
-                          <div className="footer-note">Default: {baseValue}</div>
-                        </div>
-                      );
-                    })}
+          {activeSection === "translations" && isDeveloper ? (
+            <div className="panel">
+              <div className="panel-inner stack">
+                <div className="section-header">
+                  <div>
+                    <h2>{copy.translationEditor}</h2>
+                    <p>{copy.translationEditorDesc}</p>
                   </div>
+                  <button className="button secondary" onClick={() => resetLanguageOverrides(translationEditorLanguage)}>
+                    {copy.resetLanguageOverrides}
+                  </button>
+                </div>
+                <div className="grid-2">
+                  <div>
+                    <label className="label" htmlFor="translation-language">
+                      {copy.editLanguage}
+                    </label>
+                    <select id="translation-language" className="select" value={translationEditorLanguage} onChange={(event) => setTranslationEditorLanguage(event.target.value as AppLanguage)}>
+                      {languageOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="translation-search">
+                      {copy.searchTranslations}
+                    </label>
+                    <input
+                      id="translation-search"
+                      className="field"
+                      value={translationSearch}
+                      onChange={(event) => setTranslationSearch(event.target.value)}
+                      placeholder={copy.searchTranslationsPlaceholder}
+                    />
+                  </div>
+                </div>
+                <div className="criteria-list">
+                  {visibleTranslationKeys.map((key) => {
+                    const baseValue = translationBaseCopy[key];
+                    const currentValue = translationOverrideValues[key] ?? baseValue;
+                    const isEdited = currentValue !== baseValue;
+                    const fieldId = `translation-${translationEditorLanguage}-${key}`;
+
+                    return (
+                      <div className="criterion-card" key={key}>
+                        <div className="criterion-top">
+                          <div>
+                            <strong>{key}</strong>
+                            <span>{isEdited ? copy.edited : copy.defaultValue}</span>
+                          </div>
+                          <button className="button secondary" onClick={() => resetTranslationOverride(translationEditorLanguage, key)} disabled={!isEdited}>
+                            {copy.resetLanguageOverrides}
+                          </button>
+                        </div>
+                        <label className="label" htmlFor={fieldId} style={{ marginTop: 12 }}>
+                          {copy.currentText}
+                        </label>
+                        <textarea
+                          id={fieldId}
+                          className="textarea"
+                          value={currentValue}
+                          aria-label={`Translation ${translationEditorLanguage} ${key}`}
+                          onChange={(event) => updateTranslationOverride(translationEditorLanguage, key, event.target.value)}
+                        />
+                        <div className="footer-note">{copy.defaultText.replace("{value}", baseValue)}</div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>

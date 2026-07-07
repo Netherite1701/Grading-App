@@ -1,4 +1,5 @@
 @echo off
 setlocal
+
 cd /d "%~dp0"
-npm run dev
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run-app.ps1"

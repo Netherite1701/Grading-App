@@ -6,6 +6,7 @@ const mockUserRef = {};
 const collectionMock = vi.fn((_: unknown, name: string) => ({ name }));
 const getDocMock = vi.fn();
 const firestoreOnSnapshotMock = vi.fn();
+const deleteDocMock = vi.fn();
 const setDocMock = vi.fn();
 const signInWithPopupMock = vi.fn();
 const signOutMock = vi.fn();
@@ -27,6 +28,7 @@ vi.mock("firebase/auth", () => ({
 vi.mock("firebase/firestore", () => ({
   collection: collectionMock,
   doc: vi.fn(() => mockUserRef),
+  deleteDoc: deleteDocMock,
   getDoc: getDocMock,
   getFirestore: vi.fn(() => mockDb),
   onSnapshot: firestoreOnSnapshotMock,
@@ -48,6 +50,7 @@ describe("Firebase helpers", () => {
     getDocMock.mockReset();
     collectionMock.mockClear();
     firestoreOnSnapshotMock.mockReset();
+    deleteDocMock.mockReset();
     setDocMock.mockReset();
     signInWithPopupMock.mockReset();
     signOutMock.mockReset();
@@ -64,6 +67,10 @@ describe("Firebase helpers", () => {
 
   it("explains missing Firebase Auth configuration", () => {
     expect(firebase.getFirebaseErrorMessage({ code: "auth/configuration-not-found" })).toContain("enable Google sign-in");
+  });
+
+  it("explains event write permission failures using the canonical user document", () => {
+    expect(firebase.getFirebaseErrorMessage({ code: "permission-denied" })).toContain("users/{auth.uid}");
   });
 
   it("reuses an existing user record and preserves its role", async () => {
@@ -179,11 +186,17 @@ describe("Firebase helpers", () => {
     expect(setDocMock).toHaveBeenCalledWith(mockUserRef, expect.objectContaining({ role: "organizer" }), { merge: true });
   });
 
+  it("deletes participants from Firestore", async () => {
+    await firebase.deleteFirebaseParticipant("team-1");
+
+    expect(deleteDocMock).toHaveBeenCalledWith(mockUserRef);
+  });
+
   it("subscribes to app data collections and groups participants by event", async () => {
     const unsubscribe = vi.fn();
     firestoreOnSnapshotMock.mockImplementation((collectionRef, next) => {
       const docsByCollection = {
-        users: [{ data: () => ({ uid: "user-1", email: "user@example.com", role: "guest", createdAt: "now" }) }],
+        users: [{ id: "user-1", data: () => ({ uid: "wrong-user-id", email: "user@example.com", role: "guest", createdAt: "now" }) }],
         events: [{ id: "event-1", data: () => ({ name: "Event One", status: "draft", gradingType: "rubric", ownerId: "user-1", ownerEmail: "user@example.com", criteria: [], createdAt: "now", updatedAt: "now" }) }],
         participants: [{ id: "team-1", data: () => ({ eventId: "event-1", name: "Team One", createdAt: "now", updatedAt: "now" }) }],
         scorecards: [{ id: "score-1", data: () => ({ eventId: "event-1", participantId: "team-1", judgeId: "judge-1", judgeName: "Judge", judgeEmail: "judge@example.com", scores: {}, totalScore: 0, updatedAt: "now" }) }]
@@ -197,6 +210,7 @@ describe("Firebase helpers", () => {
 
     expect(onData).toHaveBeenLastCalledWith(
       expect.objectContaining({
+        users: [expect.objectContaining({ uid: "user-1", email: "user@example.com" })],
         participantsByEvent: {
           "event-1": [expect.objectContaining({ id: "team-1", name: "Team One" })]
         }

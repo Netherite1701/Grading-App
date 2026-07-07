@@ -15,26 +15,44 @@ service cloud.firestore {
     }
 
     function currentRole() {
-      return currentUserExists() ? lower(get(currentUserPath()).data.role) : "guest";
+      return currentUserExists() ? get(currentUserPath()).data.role : "guest";
     }
 
     function isDeveloper() {
-      return currentRole() == "developer" || currentRole() == "dev";
+      return currentRole() == "developer"
+        || currentRole() == "Developer"
+        || currentRole() == "DEVELOPER"
+        || currentRole() == "dev"
+        || currentRole() == "Dev"
+        || currentRole() == "DEV";
     }
 
     function isOrganizer() {
-      return currentRole() == "organizer" || currentRole() == "admin" || isDeveloper();
+      return currentRole() == "organizer"
+        || currentRole() == "Organizer"
+        || currentRole() == "ORGANIZER"
+        || currentRole() == "admin"
+        || currentRole() == "Admin"
+        || currentRole() == "ADMIN"
+        || isDeveloper();
     }
 
     function isJudge() {
-      return currentRole() == "judge" || isDeveloper();
+      return currentRole() == "judge"
+        || currentRole() == "Judge"
+        || currentRole() == "JUDGE"
+        || isDeveloper();
     }
 
     match /users/{uid} {
       allow read: if signedIn();
       allow create: if signedIn()
         && request.auth.uid == uid
-        && request.resource.data.role == "guest";
+        && (
+          request.resource.data.role == "guest"
+          || request.resource.data.role == "Guest"
+          || request.resource.data.role == "GUEST"
+        );
       allow update: if signedIn()
         && (
           isDeveloper()
