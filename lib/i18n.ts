@@ -118,8 +118,12 @@ const appCopy = {
     eventManagementDesc: "Create events, configure scoring, add criteria, and manage teams from the Organizer View.",
     openEventBuilder: "Open event builder",
     translationEditor: "Translation editor",
-    translationEditorDesc: "Edit browser-local UI text overrides without changing the base copy.",
+    translationEditorDesc: "Edit UI text overrides, then publish them for every signed-in user.",
     resetLanguageOverrides: "Reset language",
+    publishTranslationOverrides: "Publish translations",
+    translationOverridesPublished: "Translations published.",
+    translationOverridesLocalOnly: "Translations are saved in this browser because Firebase is not configured.",
+    translationOverridesPublishFailed: "Firebase rejected the translation publish: {error}",
     editLanguage: "Edit language",
     searchTranslations: "Search translations",
     searchTranslationsPlaceholder: "Search by key or text",
@@ -147,7 +151,16 @@ const appCopy = {
     downloadParticipantTemplate: "Download CSV template",
     participantsImported: "Imported {count} team(s) from CSV.",
     participantImportErrors: "Some CSV rows were skipped: {errors}",
-    downloadResultsCsv: "Download results CSV"
+    downloadResultsCsv: "Download results CSV",
+    teacherQrLogin: "Teacher QR login",
+    teacherQrLoginDesc: "Teachers can scan this QR code to join the selected event as judges.",
+    teacherQrName: "Teacher display name",
+    teacherQrNamePlaceholder: "Teacher Judge",
+    teacherQrLink: "Teacher QR link",
+    copyTeacherQrLink: "Copy link",
+    openTeacherQrLogin: "Open QR login",
+    teacherQrLoginUnavailable: "Select an event and configure Firebase to generate a teacher QR login.",
+    teacherQrSignedIn: "Teacher QR login connected. You can start judging."
   },
   ko: {
     roleAccount: (role: string) => `${role} 계정`,
@@ -259,8 +272,12 @@ const appCopy = {
     eventManagementDesc: "주최자 화면에서 행사 생성, 채점 방식 설정, 항목 추가, 팀 관리를 할 수 있습니다.",
     openEventBuilder: "행사 설정 열기",
     translationEditor: "번역 편집기",
-    translationEditorDesc: "기본 문구는 유지한 채 브라우저에만 적용되는 UI 문구를 수정합니다.",
+    translationEditorDesc: "UI 문구를 수정한 뒤 모든 로그인 사용자에게 적용되도록 게시합니다.",
     resetLanguageOverrides: "언어 초기화",
+    publishTranslationOverrides: "번역 게시",
+    translationOverridesPublished: "번역을 게시했습니다.",
+    translationOverridesLocalOnly: "Firebase가 설정되지 않아 이 브라우저에만 번역이 저장됩니다.",
+    translationOverridesPublishFailed: "Firebase가 번역 게시를 거부했습니다: {error}",
     editLanguage: "편집할 언어",
     searchTranslations: "번역 검색",
     searchTranslationsPlaceholder: "키 또는 문구로 검색",
@@ -288,7 +305,16 @@ const appCopy = {
     downloadParticipantTemplate: "CSV 서식 다운로드",
     participantsImported: "CSV에서 팀 {count}개를 가져왔습니다.",
     participantImportErrors: "일부 CSV 행을 건너뛰었습니다: {errors}",
-    downloadResultsCsv: "결과 CSV 다운로드"
+    downloadResultsCsv: "결과 CSV 다운로드",
+    teacherQrLogin: "선생님 QR 로그인",
+    teacherQrLoginDesc: "선생님이 이 QR 코드를 스캔하면 선택한 행사에 심사위원으로 참여할 수 있습니다.",
+    teacherQrName: "선생님 표시 이름",
+    teacherQrNamePlaceholder: "선생님 심사위원",
+    teacherQrLink: "선생님 QR 링크",
+    copyTeacherQrLink: "링크 복사",
+    openTeacherQrLogin: "QR 로그인 열기",
+    teacherQrLoginUnavailable: "행사를 선택하고 Firebase를 설정하면 선생님 QR 로그인을 만들 수 있습니다.",
+    teacherQrSignedIn: "선생님 QR 로그인으로 연결되었습니다. 바로 심사를 시작할 수 있습니다."
   }
 } as const;
 

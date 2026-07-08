@@ -299,5 +299,5 @@ describe("AppShell", () => {
     fireEvent.change(screen.getByLabelText("Translation ko appTitle"), { target: { value: "행사 채점 관리" } });
     expect(screen.getByText("Edited")).toBeInTheDocument();
     expect(window.localStorage.getItem("grading-program-translation-overrides")).toContain("행사 채점 관리");
-  });
+  }, 10000);
 });

@@ -78,6 +78,21 @@ describe("Firebase deployment contract", () => {
     expect(rules).toContain("allow create, update, delete: if isOrganizer();");
   });
 
+  it("allows Firebase anonymous auth for teacher QR judge sessions", () => {
+    const rules = readWorkspaceFile("firestore.rules");
+
+    expect(rules).toContain('request.auth.token.firebase.sign_in_provider == "anonymous"');
+    expect(rules).toContain("function isTeacherQrUserWrite(uid)");
+    expect(rules).toContain('request.resource.data.role == "judge"');
+  });
+
+  it("stores published translation overrides in appConfig/translations", () => {
+    const rules = readWorkspaceFile("firestore.rules");
+
+    expect(rules).toContain("match /appConfig/{configId}");
+    expect(rules).toContain('configId == "translations" && isDeveloper()');
+  });
+
   it("documents the required Firebase auth domain and App Check env vars", () => {
     const envExample = readWorkspaceFile(".env.local.example");
 
@@ -98,5 +113,6 @@ describe("Firebase deployment contract", () => {
     expect(rules).toContain("request.auth.token.email_verified == true");
     expect(rules).toContain('request.auth.token.email.matches("^[^@]+@soongsil\\\\.net$")');
     expect(rules).toContain("allow read: if canAccessApp();");
+    expect(rules).toContain("hasAllowedEmailDomain() || isTeacherQrAuth()");
   });
 });

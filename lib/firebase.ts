@@ -1,6 +1,7 @@
 import type { FirebaseApp } from "firebase/app";
 import type { Auth, User as FirebaseUser } from "firebase/auth";
 import type { Firestore, Unsubscribe } from "firebase/firestore";
+import type { TranslationOverrides } from "@/lib/i18n";
 import type { Event, Participant, Role, Scorecard, StoredRole, User } from "@/lib/types";
 
 const firebaseConfig = {
@@ -22,11 +23,15 @@ export interface FirebaseAppData {
   events: Event[];
   participantsByEvent: Record<string, Participant[]>;
   scorecards: Scorecard[];
+  translationOverrides: TranslationOverrides;
 }
 
 type ParticipantRecord = Participant & { eventId?: string };
 type FirebaseUserProfile = Pick<FirebaseUser, "uid" | "email" | "displayName" | "photoURL">;
 type AuthorizedFirebaseUser = FirebaseUserProfile & Pick<FirebaseUser, "emailVerified">;
+export interface TeacherQrProfile {
+  displayName?: string;
+}
 
 function getAllowedEmailDomain() {
   return process.env.NEXT_PUBLIC_ALLOWED_EMAIL_DOMAIN?.trim().toLowerCase() ?? "";
@@ -49,6 +54,10 @@ function isLocalhost(hostname: string) {
 function hasAllowedEmailDomain(email: string, allowedDomain: string) {
   const normalizedEmail = email.trim().toLowerCase();
   return normalizedEmail.endsWith(`@${allowedDomain}`);
+}
+
+function isAnonymousFirebaseUser(firebaseUser: Pick<FirebaseUser, "isAnonymous">) {
+  return firebaseUser.isAnonymous === true;
 }
 
 export function isFirebaseConfigured() {
@@ -121,6 +130,11 @@ export function assertAuthorizedFirebaseUser(firebaseUser: Pick<FirebaseUser, "e
   }
 }
 
+export function assertAuthorizedAppUser(firebaseUser: Pick<FirebaseUser, "email" | "emailVerified" | "isAnonymous">) {
+  if (isAnonymousFirebaseUser(firebaseUser)) return;
+  assertAuthorizedFirebaseUser(firebaseUser);
+}
+
 export function createNewUserRecord(firebaseUser: FirebaseUserProfile): User {
   const now = new Date().toISOString();
   return {
@@ -177,7 +191,6 @@ export async function initializeFirebaseAppCheck() {
 
 export async function getFirebaseAuth() {
   if (!auth) {
-    await initializeFirebaseAppCheck();
     const { getAuth } = await import("firebase/auth");
     auth = getAuth(await getFirebaseApp());
   }
@@ -221,6 +234,12 @@ export async function signInWithGoogle() {
   return result.user;
 }
 
+export async function signInWithTeacherQr() {
+  const { signInAnonymously } = await import("firebase/auth");
+  const result = await signInAnonymously(await getFirebaseAuth());
+  return result.user;
+}
+
 export async function signOutOfGoogle() {
   const { signOut } = await import("firebase/auth");
   return signOut(await getFirebaseAuth());
@@ -231,12 +250,13 @@ export async function subscribeToFirebaseAppData(onData: (data: FirebaseAppData)
     users: [],
     events: [],
     participantsByEvent: {},
-    scorecards: []
+    scorecards: [],
+    translationOverrides: {}
   };
 
   const emit = () => onData({ ...data, participantsByEvent: { ...data.participantsByEvent } });
   const fail = (error: unknown) => onError?.(error instanceof Error ? error : new Error("Firebase sync failed."));
-  const { collection, onSnapshot } = await import("firebase/firestore");
+  const { collection, doc, onSnapshot } = await import("firebase/firestore");
   const firestore = await getFirebaseDb();
 
   const unsubscribers: Unsubscribe[] = [
@@ -280,6 +300,16 @@ export async function subscribeToFirebaseAppData(onData: (data: FirebaseAppData)
         emit();
       },
       fail
+    ),
+    onSnapshot(
+      doc(firestore, "appConfig", "translations"),
+      (snapshot) => {
+        data.translationOverrides = snapshot.exists()
+          ? ((snapshot.data().overrides ?? {}) as TranslationOverrides)
+          : {};
+        emit();
+      },
+      fail
     )
   ];
 
@@ -311,6 +341,18 @@ export async function updateFirebaseUserRole(uid: string, role: Role) {
   return setDoc(doc(await getFirebaseDb(), "users", uid), { role, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
+export async function saveFirebaseTranslationOverrides(overrides: TranslationOverrides) {
+  const { doc, setDoc } = await import("firebase/firestore");
+  return setDoc(
+    doc(await getFirebaseDb(), "appConfig", "translations"),
+    {
+      overrides,
+      updatedAt: new Date().toISOString()
+    },
+    { merge: true }
+  );
+}
+
 export async function upsertAuthenticatedUser(firebaseUser: FirebaseUserProfile): Promise<User> {
   const { doc, getDoc, setDoc } = await import("firebase/firestore");
   const userRef = doc(await getFirebaseDb(), "users", firebaseUser.uid);
@@ -333,6 +375,37 @@ export async function upsertAuthenticatedUser(firebaseUser: FirebaseUserProfile)
   }
 
   const user: User = createNewUserRecord(firebaseUser);
+  await setDoc(userRef, user, { merge: true });
+  return user;
+}
+
+export async function upsertTeacherQrUser(firebaseUser: FirebaseUserProfile, profile: TeacherQrProfile = {}): Promise<User> {
+  const { doc, getDoc, setDoc } = await import("firebase/firestore");
+  const userRef = doc(await getFirebaseDb(), "users", firebaseUser.uid);
+  const existing = await getDoc(userRef);
+  const now = new Date().toISOString();
+  const displayName = profile.displayName?.trim() || firebaseUser.displayName || "Teacher Judge";
+
+  const user: User = existing.exists()
+    ? {
+        uid: firebaseUser.uid,
+        email: "",
+        displayName,
+        photoURL: firebaseUser.photoURL ?? undefined,
+        role: "judge",
+        createdAt: (existing.data() as Partial<User>).createdAt ?? now,
+        updatedAt: now
+      }
+    : {
+        uid: firebaseUser.uid,
+        email: "",
+        displayName,
+        photoURL: firebaseUser.photoURL ?? undefined,
+        role: "judge",
+        createdAt: now,
+        updatedAt: now
+      };
+
   await setDoc(userRef, user, { merge: true });
   return user;
 }

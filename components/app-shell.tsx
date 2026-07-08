@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { buildParticipantTemplateCsv, buildStandingsCsv, parseParticipantsCsv } from "@/lib/export";
 import {
-  assertAuthorizedFirebaseUser,
+  assertAuthorizedAppUser,
   deleteFirebaseParticipant,
   getFirebaseErrorMessage,
   isFirebaseConfigured,
@@ -12,11 +13,14 @@ import {
   saveFirebaseEvent,
   saveFirebaseParticipant,
   saveFirebaseScorecard,
+  saveFirebaseTranslationOverrides,
+  signInWithTeacherQr,
   signInWithGoogle,
   signOutOfGoogle,
   subscribeToFirebaseAppData,
   updateFirebaseUserRole,
-  upsertAuthenticatedUser
+  upsertAuthenticatedUser,
+  upsertTeacherQrUser
 } from "@/lib/firebase";
 import { demoEvents, demoParticipants, demoScorecards, demoUsers, hydrateScorecards } from "@/lib/mock-data";
 import { buildLeaderboardRow, calculateTotals, clampScore, createRubricLevels, getDefaultScores, getRubricLevelForScore } from "@/lib/scoring";
@@ -150,11 +154,36 @@ function readCsvFile(file: File) {
   });
 }
 
+function getTeacherQrRequest() {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("teacherQr") !== "1") return null;
+
+  return {
+    eventId: params.get("eventId") ?? "",
+    teacherName: params.get("teacherName") ?? ""
+  };
+}
+
+function buildTeacherQrLoginUrl(eventId: string, teacherName: string) {
+  if (typeof window === "undefined" || !eventId) return "";
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("teacherQr", "1");
+  url.searchParams.set("eventId", eventId);
+  if (teacherName.trim()) {
+    url.searchParams.set("teacherName", teacherName.trim());
+  }
+  return url.toString();
+}
+
 export function AppShell({ initialUser }: AppShellProps) {
   const firebaseAvailable = isFirebaseConfigured();
   const demoDeveloper = demoUsers.find((user) => normalizeRole(user.role) === "developer") ?? null;
   const [language, setLanguage] = useState<AppLanguage>("ko");
   const [translationOverrides, setTranslationOverrides] = useState<TranslationOverrides>({});
+  const [translationPublishMessage, setTranslationPublishMessage] = useState("");
   const [translationEditorLanguage, setTranslationEditorLanguage] = useState<AppLanguage>("ko");
   const [translationSearch, setTranslationSearch] = useState("");
   const [hasLoadedBrowserPreferences, setHasLoadedBrowserPreferences] = useState(false);
@@ -182,9 +211,12 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [participantCsvText, setParticipantCsvText] = useState("");
   const [participantImportMessage, setParticipantImportMessage] = useState("");
   const [eventCreateMessage, setEventCreateMessage] = useState("");
+  const [teacherQrName, setTeacherQrName] = useState("");
+  const [teacherQrMessage, setTeacherQrMessage] = useState("");
   const [section, setSection] = useState<SectionId>(defaultSectionForRole(normalizeRole(authUser?.role)));
   const [expandedCriterionId, setExpandedCriterionId] = useState<string | null>(initialEvents[0]?.criteria[0]?.id ?? null);
   const optimisticEventsRef = useRef<Event[]>([]);
+  const teacherQrSignInStartedRef = useRef(false);
 
   const role = normalizeRole(authUser?.role);
   const isDeveloper = role === "developer";
@@ -192,6 +224,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const canOrganize = role === "organizer" || isDeveloper;
   const activeSection = isDeveloper ? section : defaultSectionForRole(role);
   const activeEvent = events.find((event) => event.id === activeEventId) ?? events[0];
+  const teacherQrLoginUrl = firebaseAvailable ? buildTeacherQrLoginUrl(activeEvent?.id ?? "", teacherQrName) : "";
   const participants = participantsByEvent[activeEvent?.id ?? ""] ?? [];
   const selectedParticipant = participants.find((participant) => participant.id === selectedParticipantId) ?? participants[0];
   const judgeId = authUser?.uid ?? "judge-1";
@@ -232,6 +265,20 @@ export function AppShell({ initialUser }: AppShellProps) {
     }
   };
 
+  const completeTeacherQrSignIn = async (firebaseUser: Parameters<typeof upsertTeacherQrUser>[0], teacherName = "") => {
+    const persistedUser = await upsertTeacherQrUser(firebaseUser, { displayName: teacherName });
+    setAuthError("");
+    setTeacherQrMessage(copy.teacherQrSignedIn);
+    setAuthUser(persistedUser);
+    setUsers((current) => {
+      const withoutUser = current.filter((user) => user.uid !== persistedUser.uid);
+      return [...withoutUser, persistedUser];
+    });
+    setSection("judge");
+    setAuthStatus(copy.signedIn);
+    return persistedUser;
+  };
+
   useEffect(() => {
     if (!firebaseAvailable || initialUser !== undefined) return;
     let unsubscribe: (() => void) | undefined;
@@ -246,8 +293,11 @@ export function AppShell({ initialUser }: AppShellProps) {
       }
 
       try {
-        assertAuthorizedFirebaseUser(firebaseUser);
-        const persistedUser = await upsertAuthenticatedUser(firebaseUser);
+        assertAuthorizedAppUser(firebaseUser);
+        const teacherQrRequest = getTeacherQrRequest();
+        const persistedUser = firebaseUser.isAnonymous
+          ? await completeTeacherQrSignIn(firebaseUser, teacherQrRequest?.teacherName)
+          : await upsertAuthenticatedUser(firebaseUser);
         setAuthError("");
         setAuthUser(persistedUser);
         setUsers((current) => {
@@ -283,6 +333,25 @@ export function AppShell({ initialUser }: AppShellProps) {
   }, [firebaseAvailable, initialUser, language]);
 
   useEffect(() => {
+    if (!firebaseAvailable || authUser || initialUser !== undefined || teacherQrSignInStartedRef.current) return;
+    const teacherQrRequest = getTeacherQrRequest();
+    if (!teacherQrRequest) return;
+
+    teacherQrSignInStartedRef.current = true;
+    if (teacherQrRequest.eventId) {
+      setActiveEventId(teacherQrRequest.eventId);
+    }
+
+    void signInWithTeacherQr()
+      .then((firebaseUser) => completeTeacherQrSignIn(firebaseUser, teacherQrRequest.teacherName))
+      .catch((error) => {
+        teacherQrSignInStartedRef.current = false;
+        setAuthError(getFirebaseErrorMessage(error));
+        setAuthStatus(copy.authError);
+      });
+  }, [firebaseAvailable, authUser, initialUser, language]);
+
+  useEffect(() => {
     if (!firebaseAvailable || !authUser) return;
     let unsubscribe: (() => void) | undefined;
     let disposed = false;
@@ -314,6 +383,7 @@ export function AppShell({ initialUser }: AppShellProps) {
         setEvents(nextEvents);
         setParticipantsByEvent(nextParticipantsByEvent);
         setScorecards(nextScorecards);
+        setTranslationOverrides(data.translationOverrides ?? {});
         setActiveEventId((current) => (nextEvents.some((event) => event.id === current) ? current : nextEvents[0]?.id ?? ""));
       },
       (error) => {
@@ -365,6 +435,7 @@ export function AppShell({ initialUser }: AppShellProps) {
 
   const updateTranslationOverride = (targetLanguage: AppLanguage, key: EditableCopyKey, nextValue: string) => {
     const baseValue = getBaseAppCopy(targetLanguage)[key];
+    setTranslationPublishMessage("");
     setTranslationOverrides((current) => {
       const nextLanguageOverrides = { ...(current[targetLanguage] ?? {}) };
       if (nextValue === baseValue) {
@@ -381,6 +452,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   };
 
   const resetTranslationOverride = (targetLanguage: AppLanguage, key: EditableCopyKey) => {
+    setTranslationPublishMessage("");
     setTranslationOverrides((current) => {
       const nextLanguageOverrides = { ...(current[targetLanguage] ?? {}) };
       delete nextLanguageOverrides[key];
@@ -396,6 +468,31 @@ export function AppShell({ initialUser }: AppShellProps) {
       ...current,
       [targetLanguage]: {}
     }));
+    setTranslationPublishMessage("");
+  };
+
+  const publishTranslationOverrides = async () => {
+    if (!isDeveloper) return;
+    if (!firebaseAvailable) {
+      setTranslationPublishMessage(copy.translationOverridesLocalOnly);
+      return;
+    }
+
+    try {
+      await saveFirebaseTranslationOverrides(translationOverrides);
+      setTranslationPublishMessage(copy.translationOverridesPublished);
+    } catch (error) {
+      setTranslationPublishMessage(copy.translationOverridesPublishFailed.replace("{error}", getFirebaseErrorMessage(error)));
+    }
+  };
+
+  const copyTeacherQrLink = async () => {
+    if (!teacherQrLoginUrl || typeof navigator === "undefined" || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(teacherQrLoginUrl);
+    } catch {
+      // Clipboard can be blocked outside secure browser contexts; the readonly field still exposes the link.
+    }
   };
 
   const syncEventForm = (event: Event) => {
@@ -770,6 +867,7 @@ export function AppShell({ initialUser }: AppShellProps) {
                 <span className={`badge ${firebaseAvailable ? "emerald" : "amber"}`}>{firebaseAvailable ? copy.firebase : copy.local}</span>
               </div>
               {authError ? <div className="footer-note">{authError}</div> : null}
+              {teacherQrMessage ? <div className="footer-note">{teacherQrMessage}</div> : null}
               <div className="button-row">
                 {!authUser ? (
                   <button className="button" onClick={handleSignIn} disabled={!firebaseAvailable}>
@@ -1214,6 +1312,55 @@ export function AppShell({ initialUser }: AppShellProps) {
                 <div className="panel-inner stack">
                   <div className="section-header">
                     <div>
+                      <h2>{copy.teacherQrLogin}</h2>
+                      <p>{copy.teacherQrLoginDesc}</p>
+                    </div>
+                  </div>
+                  {teacherQrLoginUrl ? (
+                    <div className="qr-layout">
+                      <div className="qr-code" aria-label={copy.teacherQrLogin}>
+                        <QRCodeSVG value={teacherQrLoginUrl} size={192} bgColor="#ffffff" fgColor="#09111f" level="M" includeMargin />
+                      </div>
+                      <div className="stack">
+                        <div>
+                          <label className="label" htmlFor="teacher-qr-name">
+                            {copy.teacherQrName}
+                          </label>
+                          <input
+                            id="teacher-qr-name"
+                            className="field"
+                            value={teacherQrName}
+                            onChange={(event) => setTeacherQrName(event.target.value)}
+                            placeholder={copy.teacherQrNamePlaceholder}
+                          />
+                        </div>
+                        <div>
+                          <label className="label" htmlFor="teacher-qr-link">
+                            {copy.teacherQrLink}
+                          </label>
+                          <input id="teacher-qr-link" className="field" value={teacherQrLoginUrl} readOnly />
+                        </div>
+                        <div className="button-row">
+                          <button type="button" className="button secondary" onClick={copyTeacherQrLink}>
+                            {copy.copyTeacherQrLink}
+                          </button>
+                          <a className="button secondary" href={teacherQrLoginUrl}>
+                            {copy.openTeacherQrLogin}
+                          </a>
+                        </div>
+                        {teacherQrMessage ? <div className="footer-note">{teacherQrMessage}</div> : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="footer-note">{copy.teacherQrLoginUnavailable}</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="panel">
+                <div className="panel-inner stack">
+                  <div className="section-header">
+                    <div>
                       <h2>{copy.scoringPreview}</h2>
                       <p>{copy.scoringPreviewDesc}</p>
                     </div>
@@ -1515,10 +1662,16 @@ export function AppShell({ initialUser }: AppShellProps) {
                     <h2>{copy.translationEditor}</h2>
                     <p>{copy.translationEditorDesc}</p>
                   </div>
-                  <button className="button secondary" onClick={() => resetLanguageOverrides(translationEditorLanguage)}>
-                    {copy.resetLanguageOverrides}
-                  </button>
+                  <div className="button-row">
+                    <button className="button secondary" onClick={() => resetLanguageOverrides(translationEditorLanguage)}>
+                      {copy.resetLanguageOverrides}
+                    </button>
+                    <button className="button" onClick={publishTranslationOverrides}>
+                      {copy.publishTranslationOverrides}
+                    </button>
+                  </div>
                 </div>
+                {translationPublishMessage ? <div className="footer-note">{translationPublishMessage}</div> : null}
                 <div className="grid-2">
                   <div>
                     <label className="label" htmlFor="translation-language">

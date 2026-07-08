@@ -2,6 +2,13 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Assumed data model:
+    // - users/{uid}: uid, email, displayName?, photoURL?, role, createdAt, updatedAt?
+    // - events/{eventId}: event setup, owner metadata, criteria, status, timestamps
+    // - participants/{participantId}: team/project metadata plus eventId
+    // - scorecards/{scorecardId}: judgeId, participantId, eventId, scores, totalScore
+    // - appConfig/translations: published UI translation overrides
+
     function signedIn() {
       return request.auth != null;
     }
@@ -16,8 +23,14 @@ service cloud.firestore {
         && request.auth.token.email.matches("^[^@]+@soongsil\\.net$");
     }
 
+    function isTeacherQrAuth() {
+      return signedIn()
+        && request.auth.token.firebase is map
+        && request.auth.token.firebase.sign_in_provider == "anonymous";
+    }
+
     function canAccessApp() {
-      return signedIn() && hasAllowedEmailDomain();
+      return signedIn() && (hasAllowedEmailDomain() || isTeacherQrAuth());
     }
 
     function currentUserPath() {
@@ -58,16 +71,31 @@ service cloud.firestore {
         || isDeveloper();
     }
 
+    function isGuestRole(role) {
+      return role == "guest"
+        || role == "Guest"
+        || role == "GUEST";
+    }
+
+    function isTeacherQrUserWrite(uid) {
+      return isTeacherQrAuth()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.email == ""
+        && request.resource.data.role == "judge";
+    }
+
     match /users/{uid} {
       allow read: if canAccessApp();
       allow create: if canAccessApp()
         && request.auth.uid == uid
         && request.resource.data.uid == uid
-        && request.resource.data.email == request.auth.token.email
         && (
-          request.resource.data.role == "guest"
-          || request.resource.data.role == "Guest"
-          || request.resource.data.role == "GUEST"
+          (
+            request.resource.data.email == request.auth.token.email
+            && isGuestRole(request.resource.data.role)
+          )
+          || isTeacherQrUserWrite(uid)
         );
       allow update: if canAccessApp()
         && (
@@ -76,6 +104,7 @@ service cloud.firestore {
             request.auth.uid == uid
             && request.resource.data.role == resource.data.role
           )
+          || isTeacherQrUserWrite(uid)
         );
       allow delete: if isDeveloper();
     }
@@ -95,6 +124,11 @@ service cloud.firestore {
       allow create, update: if isJudge()
         && request.resource.data.judgeId == request.auth.uid;
       allow delete: if isDeveloper();
+    }
+
+    match /appConfig/{configId} {
+      allow read: if canAccessApp();
+      allow create, update, delete: if configId == "translations" && isDeveloper();
     }
   }
 }

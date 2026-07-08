@@ -9,7 +9,9 @@ A judges-first, real-time hackathon and pitch grading platform built with Next.j
 - Weighted standings and podium view
 - CSV export scaffold
 - Firebase Authentication with Google sign-in
+- Teacher QR login with Firebase anonymous sign-in
 - Firestore-backed users, events, participants, scorecards, and roles
+- Firestore-published translation overrides
 
 ## Local setup
 
@@ -40,7 +42,7 @@ A judges-first, real-time hackathon and pitch grading platform built with Next.j
 
 ## Firebase backend setup
 
-1. In Firebase Console, enable Authentication > Google sign-in.
+1. In Firebase Console, enable Authentication > Google sign-in and Anonymous sign-in.
 
 2. In Authentication > Settings > Authorized domains, add your local/deployed domains.
 
@@ -58,5 +60,8 @@ The app uses these top-level Firestore collections:
 - `events`
 - `participants`
 - `scorecards`
+- `appConfig/translations`
 
 New Google users are created as `guest`. Developer users can assign roles from Developer tools.
+Teacher QR users are anonymous Firebase Auth users that are written to `users/{uid}` as `judge`.
+Developer users can publish translation overrides from the Translations tab.

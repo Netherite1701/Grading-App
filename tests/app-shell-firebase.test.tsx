@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +9,8 @@ const firebaseUser = {
   email: "firebase@soongsil.net",
   displayName: "Firebase User",
   photoURL: null,
-  emailVerified: true
+  emailVerified: true,
+  isAnonymous: false
 };
 
 const guestUser: User = {
@@ -28,13 +29,16 @@ const organizerUser: User = {
 
 const firebaseHarness = vi.hoisted(() => ({
   appDataListener: undefined as ((data: unknown) => void) | undefined,
-  assertAuthorizedFirebaseUser: vi.fn(),
+  authStateUser: undefined as typeof firebaseUser | null | undefined,
+  assertAuthorizedAppUser: vi.fn(),
   saveFirebaseEvent: vi.fn(),
+  saveFirebaseTranslationOverrides: vi.fn(),
+  signInWithTeacherQr: vi.fn(),
   signOutOfGoogle: vi.fn()
 }));
 
 vi.mock("@/lib/firebase", () => ({
-  assertAuthorizedFirebaseUser: firebaseHarness.assertAuthorizedFirebaseUser,
+  assertAuthorizedAppUser: firebaseHarness.assertAuthorizedAppUser,
   getFirebaseErrorMessage: (error: unknown) => (error instanceof Error ? error.message : "Firebase request failed."),
   isFirebaseConfigured: () => true,
   normalizeRole: (role: StoredRole | undefined): Role => {
@@ -44,14 +48,16 @@ vi.mock("@/lib/firebase", () => ({
     if (normalizedRole === "judge" || normalizedRole === "organizer" || normalizedRole === "developer" || normalizedRole === "guest") return normalizedRole;
     return "guest";
   },
-  onFirebaseUserChanged: vi.fn(async (callback: (user: typeof firebaseUser) => void) => {
-    void callback(firebaseUser);
+  onFirebaseUserChanged: vi.fn(async (callback: (user: typeof firebaseUser | null) => void) => {
+    void callback(firebaseHarness.authStateUser === undefined ? firebaseUser : firebaseHarness.authStateUser);
     return vi.fn();
   }),
   saveFirebaseEvent: firebaseHarness.saveFirebaseEvent,
   saveFirebaseParticipant: vi.fn(),
   saveFirebaseScorecard: vi.fn(),
+  saveFirebaseTranslationOverrides: firebaseHarness.saveFirebaseTranslationOverrides,
   signInWithGoogle: vi.fn(async () => firebaseUser),
+  signInWithTeacherQr: firebaseHarness.signInWithTeacherQr,
   signOutOfGoogle: firebaseHarness.signOutOfGoogle,
   subscribeToFirebaseAppData: vi.fn(async (onData: (data: unknown) => void) => {
     firebaseHarness.appDataListener = onData;
@@ -59,24 +65,45 @@ vi.mock("@/lib/firebase", () => ({
       users: [organizerUser],
       events: [],
       participantsByEvent: {},
-      scorecards: []
+      scorecards: [],
+      translationOverrides: {}
     });
     return vi.fn();
   }),
   updateFirebaseUserRole: vi.fn(),
-  upsertAuthenticatedUser: vi.fn(async () => guestUser)
+  upsertAuthenticatedUser: vi.fn(async () => guestUser),
+  upsertTeacherQrUser: vi.fn(async (user: typeof firebaseUser, profile: { displayName?: string }) => ({
+    uid: user.uid,
+    email: "",
+    displayName: profile.displayName || "Teacher Judge",
+    role: "judge",
+    createdAt: "2026-07-01T00:00:00.000Z"
+  }))
 }));
 
 describe("AppShell Firebase role sync", () => {
   beforeEach(() => {
     firebaseHarness.appDataListener = undefined;
-    firebaseHarness.assertAuthorizedFirebaseUser.mockReset();
+    firebaseHarness.authStateUser = undefined;
+    firebaseHarness.assertAuthorizedAppUser.mockReset();
     firebaseHarness.saveFirebaseEvent.mockReset();
     firebaseHarness.saveFirebaseEvent.mockResolvedValue(undefined);
+    firebaseHarness.saveFirebaseTranslationOverrides.mockReset();
+    firebaseHarness.saveFirebaseTranslationOverrides.mockResolvedValue(undefined);
+    firebaseHarness.signInWithTeacherQr.mockReset();
+    firebaseHarness.signInWithTeacherQr.mockResolvedValue({
+      uid: "teacher-qr-1",
+      email: null,
+      displayName: null,
+      photoURL: null,
+      emailVerified: false,
+      isAnonymous: true
+    });
     firebaseHarness.signOutOfGoogle.mockReset();
     firebaseHarness.signOutOfGoogle.mockResolvedValue(undefined);
     window.localStorage.clear();
     window.localStorage.setItem("grading-program-language", "en");
+    window.history.pushState({}, "", "/");
     document.documentElement.lang = "";
   });
 
@@ -151,8 +178,61 @@ describe("AppShell Firebase role sync", () => {
     expect(await screen.findByText(/Event stayed as a local draft because Firebase rejected the save/)).toBeInTheDocument();
   });
 
+  it("generates a teacher QR login link for the selected event", async () => {
+    const user = userEvent.setup();
+    const { AppShell } = await import("@/components/app-shell");
+
+    render(<AppShell />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Developer tools" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Organizer View" }));
+    await user.type(screen.getByLabelText("Teacher display name"), "Professor Kim");
+
+    const qrLink = screen.getByLabelText("Teacher QR link") as HTMLInputElement;
+    const qrUrl = new URL(qrLink.value);
+    expect(qrUrl.searchParams.get("teacherQr")).toBe("1");
+    expect(qrUrl.searchParams.get("eventId")).toBe("launchpad-2026");
+    expect(qrUrl.searchParams.get("teacherName")).toBe("Professor Kim");
+    expect(screen.getByLabelText("Teacher QR login")).toBeInTheDocument();
+  });
+
+  it("signs teachers in from a QR URL as judges", async () => {
+    firebaseHarness.authStateUser = null;
+    const { AppShell } = await import("@/components/app-shell");
+    window.history.pushState({}, "", "/?teacherQr=1&eventId=launchpad-2026&teacherName=Professor%20Kim");
+
+    render(<AppShell />);
+
+    await waitFor(() => {
+      expect(firebaseHarness.signInWithTeacherQr).toHaveBeenCalled();
+    });
+    expect(await screen.findByRole("heading", { name: "Professor Kim" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Judge workspace" })).toBeInTheDocument();
+  });
+
+  it("publishes translation overrides to Firebase", async () => {
+    const { AppShell } = await import("@/components/app-shell");
+
+    render(<AppShell />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Developer tools" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Translations" }));
+    fireEvent.change(screen.getByLabelText("Edit language"), { target: { value: "en" } });
+    fireEvent.change(await screen.findByLabelText("Translation en appTitle"), { target: { value: "Published Console" } });
+    fireEvent.click(screen.getByRole("button", { name: "Publish translations" }));
+
+    expect(firebaseHarness.saveFirebaseTranslationOverrides).toHaveBeenCalledWith(expect.objectContaining({ en: expect.objectContaining({ appTitle: "Published Console" }) }));
+    expect(await screen.findByText("Translations published.")).toBeInTheDocument();
+  }, 10000);
+
   it("signs the session back out when Firebase rejects the restored account", async () => {
-    firebaseHarness.assertAuthorizedFirebaseUser.mockImplementation(() => {
+    firebaseHarness.assertAuthorizedAppUser.mockImplementation(() => {
       throw new Error("학교 Google Workspace 계정(@soongsil.net)으로만 로그인할 수 있습니다.");
     });
 
