@@ -15,6 +15,7 @@ const firebaseConfig = {
 let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
+let appCheckPromise: Promise<void> | undefined;
 
 export interface FirebaseAppData {
   users: User[];
@@ -24,6 +25,31 @@ export interface FirebaseAppData {
 }
 
 type ParticipantRecord = Participant & { eventId?: string };
+type FirebaseUserProfile = Pick<FirebaseUser, "uid" | "email" | "displayName" | "photoURL">;
+type AuthorizedFirebaseUser = FirebaseUserProfile & Pick<FirebaseUser, "emailVerified">;
+
+function getAllowedEmailDomain() {
+  return process.env.NEXT_PUBLIC_ALLOWED_EMAIL_DOMAIN?.trim().toLowerCase() ?? "";
+}
+
+function getAppCheckSiteKey() {
+  return process.env.NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY?.trim() ?? "";
+}
+
+function createFirebaseError(code: string, message: string) {
+  const error = new Error(message) as Error & { code: string };
+  error.code = code;
+  return error;
+}
+
+function isLocalhost(hostname: string) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+}
+
+function hasAllowedEmailDomain(email: string, allowedDomain: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  return normalizedEmail.endsWith(`@${allowedDomain}`);
+}
 
 export function isFirebaseConfigured() {
   return Boolean(firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId && firebaseConfig.appId);
@@ -53,10 +79,49 @@ export function getFirebaseErrorMessage(error: unknown) {
     return "Firestore is not reachable yet. Make sure the Firestore database exists, your network allows Firebase, and refresh after it is enabled.";
   }
 
+  if (code === "auth/missing-allowed-domain") {
+    return "NEXT_PUBLIC_ALLOWED_EMAIL_DOMAIN 환경 변수가 필요합니다.";
+  }
+
+  if (code === "auth/invalid-email-domain") {
+    return "학교 Google Workspace 계정(@soongsil.net)으로만 로그인할 수 있습니다.";
+  }
+
+  if (code === "auth/unverified-email") {
+    return "이메일 인증이 완료된 soongsil.net 계정으로만 로그인할 수 있습니다.";
+  }
+
+  if (code === "auth/missing-email") {
+    return "Google 계정 이메일을 확인할 수 없어 로그인할 수 없습니다.";
+  }
+
+  if (code === "app-check/missing-site-key") {
+    return "NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY 환경 변수가 필요합니다.";
+  }
+
   return message || "Firebase request failed.";
 }
 
-export function createNewUserRecord(firebaseUser: Pick<FirebaseUser, "uid" | "email" | "displayName" | "photoURL">): User {
+export function assertAuthorizedFirebaseUser(firebaseUser: Pick<FirebaseUser, "email" | "emailVerified">) {
+  const allowedEmailDomain = getAllowedEmailDomain();
+  if (!allowedEmailDomain) {
+    throw createFirebaseError("auth/missing-allowed-domain", "NEXT_PUBLIC_ALLOWED_EMAIL_DOMAIN is required.");
+  }
+
+  if (!firebaseUser.email) {
+    throw createFirebaseError("auth/missing-email", "Google account email is required.");
+  }
+
+  if (!firebaseUser.emailVerified) {
+    throw createFirebaseError("auth/unverified-email", "Google account email must be verified.");
+  }
+
+  if (!hasAllowedEmailDomain(firebaseUser.email, allowedEmailDomain)) {
+    throw createFirebaseError("auth/invalid-email-domain", `Google account must use @${allowedEmailDomain}.`);
+  }
+}
+
+export function createNewUserRecord(firebaseUser: FirebaseUserProfile): User {
   const now = new Date().toISOString();
   return {
     uid: firebaseUser.uid,
@@ -79,8 +144,40 @@ export async function getFirebaseApp() {
   return app;
 }
 
+export async function initializeFirebaseAppCheck() {
+  if (typeof window === "undefined" || !isFirebaseConfigured()) return;
+  if (appCheckPromise) return appCheckPromise;
+
+  appCheckPromise = (async () => {
+    const siteKey = getAppCheckSiteKey();
+    if (!siteKey) {
+      throw createFirebaseError("app-check/missing-site-key", "NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY is required.");
+    }
+
+    const [{ ReCaptchaEnterpriseProvider, initializeAppCheck }, firebaseApp] = await Promise.all([
+      import("firebase/app-check"),
+      getFirebaseApp()
+    ]);
+
+    if (isLocalhost(window.location.hostname)) {
+      (globalThis as typeof globalThis & { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean }).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+    }
+
+    initializeAppCheck(firebaseApp, {
+      provider: new ReCaptchaEnterpriseProvider(siteKey),
+      isTokenAutoRefreshEnabled: true
+    });
+  })().catch((error) => {
+    appCheckPromise = undefined;
+    throw error;
+  });
+
+  return appCheckPromise;
+}
+
 export async function getFirebaseAuth() {
   if (!auth) {
+    await initializeFirebaseAppCheck();
     const { getAuth } = await import("firebase/auth");
     auth = getAuth(await getFirebaseApp());
   }
@@ -89,6 +186,7 @@ export async function getFirebaseAuth() {
 
 export async function getFirebaseDb() {
   if (!db) {
+    await initializeFirebaseAppCheck();
     const { getFirestore } = await import("firebase/firestore");
     db = getFirestore(await getFirebaseApp());
   }
@@ -103,7 +201,23 @@ export async function onFirebaseUserChanged(callback: (user: FirebaseUser | null
 export async function signInWithGoogle() {
   const { GoogleAuthProvider, signInWithPopup } = await import("firebase/auth");
   const provider = new GoogleAuthProvider();
-  const result = await signInWithPopup(await getFirebaseAuth(), provider);
+  const allowedEmailDomain = getAllowedEmailDomain();
+  if (allowedEmailDomain) {
+    provider.setCustomParameters({
+      hd: allowedEmailDomain,
+      prompt: "select_account"
+    });
+  }
+
+  const firebaseAuth = await getFirebaseAuth();
+  const result = await signInWithPopup(firebaseAuth, provider);
+  try {
+    assertAuthorizedFirebaseUser(result.user as AuthorizedFirebaseUser);
+  } catch (error) {
+    const { signOut } = await import("firebase/auth");
+    await signOut(firebaseAuth);
+    throw error;
+  }
   return result.user;
 }
 
@@ -197,7 +311,7 @@ export async function updateFirebaseUserRole(uid: string, role: Role) {
   return setDoc(doc(await getFirebaseDb(), "users", uid), { role, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
-export async function upsertAuthenticatedUser(firebaseUser: Pick<FirebaseUser, "uid" | "email" | "displayName" | "photoURL">): Promise<User> {
+export async function upsertAuthenticatedUser(firebaseUser: FirebaseUserProfile): Promise<User> {
   const { doc, getDoc, setDoc } = await import("firebase/firestore");
   const userRef = doc(await getFirebaseDb(), "users", firebaseUser.uid);
   const existing = await getDoc(userRef);

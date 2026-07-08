@@ -40,6 +40,7 @@ describe("Firebase deployment contract", () => {
 
     expect(rules).not.toMatch(/\blower\s*\(/);
     expect(rules).not.toMatch(/\bupper\s*\(/);
+    expect(rules).not.toMatch(/\breplace\s*\(/);
   });
 
   it("accepts the stored role variants that the app already normalizes", () => {
@@ -75,5 +76,27 @@ describe("Firebase deployment contract", () => {
 
     expect(rules).toContain("/documents/users/$(request.auth.uid)");
     expect(rules).toContain("allow create, update, delete: if isOrganizer();");
+  });
+
+  it("documents the required Firebase auth domain and App Check env vars", () => {
+    const envExample = readWorkspaceFile(".env.local.example");
+
+    expect(envExample).toContain("NEXT_PUBLIC_ALLOWED_EMAIL_DOMAIN=soongsil.net");
+    expect(envExample).toContain("NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY=");
+  });
+
+  it("keeps .env.local out of source control", () => {
+    const gitignore = readWorkspaceFile(".gitignore");
+
+    expect(gitignore).toContain(".env.local");
+  });
+
+  it("requires verified soongsil.net accounts before Firestore access", () => {
+    const rules = readWorkspaceFile("firestore.rules");
+
+    expect(rules).toContain("request.auth != null");
+    expect(rules).toContain("request.auth.token.email_verified == true");
+    expect(rules).toContain('request.auth.token.email.matches("^[^@]+@soongsil\\\\.net$")');
+    expect(rules).toContain("allow read: if canAccessApp();");
   });
 });

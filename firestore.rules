@@ -6,12 +6,26 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function hasVerifiedEmail() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+
+    function hasAllowedEmailDomain() {
+      return hasVerifiedEmail()
+        && request.auth.token.email is string
+        && request.auth.token.email.matches("^[^@]+@soongsil\\.net$");
+    }
+
+    function canAccessApp() {
+      return signedIn() && hasAllowedEmailDomain();
+    }
+
     function currentUserPath() {
       return /databases/$(database)/documents/users/$(request.auth.uid);
     }
 
     function currentUserExists() {
-      return signedIn() && exists(currentUserPath());
+      return canAccessApp() && exists(currentUserPath());
     }
 
     function currentRole() {
@@ -45,15 +59,17 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read: if signedIn();
-      allow create: if signedIn()
+      allow read: if canAccessApp();
+      allow create: if canAccessApp()
         && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.email == request.auth.token.email
         && (
           request.resource.data.role == "guest"
           || request.resource.data.role == "Guest"
           || request.resource.data.role == "GUEST"
         );
-      allow update: if signedIn()
+      allow update: if canAccessApp()
         && (
           isDeveloper()
           || (
@@ -65,17 +81,17 @@ service cloud.firestore {
     }
 
     match /events/{eventId} {
-      allow read: if signedIn();
+      allow read: if canAccessApp();
       allow create, update, delete: if isOrganizer();
     }
 
     match /participants/{participantId} {
-      allow read: if signedIn();
+      allow read: if canAccessApp();
       allow create, update, delete: if isOrganizer();
     }
 
     match /scorecards/{scorecardId} {
-      allow read: if signedIn();
+      allow read: if canAccessApp();
       allow create, update: if isJudge()
         && request.resource.data.judgeId == request.auth.uid;
       allow delete: if isDeveloper();

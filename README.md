@@ -35,6 +35,8 @@ A judges-first, real-time hackathon and pitch grading platform built with Next.j
 - `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
 - `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
 - `NEXT_PUBLIC_FIREBASE_APP_ID`
+- `NEXT_PUBLIC_ALLOWED_EMAIL_DOMAIN`
+- `NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY`
 
 ## Firebase backend setup
 

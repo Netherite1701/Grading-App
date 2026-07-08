@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { buildParticipantTemplateCsv, buildStandingsCsv, parseParticipantsCsv } from "@/lib/export";
 import {
+  assertAuthorizedFirebaseUser,
   deleteFirebaseParticipant,
   getFirebaseErrorMessage,
   isFirebaseConfigured,
@@ -245,7 +246,9 @@ export function AppShell({ initialUser }: AppShellProps) {
       }
 
       try {
+        assertAuthorizedFirebaseUser(firebaseUser);
         const persistedUser = await upsertAuthenticatedUser(firebaseUser);
+        setAuthError("");
         setAuthUser(persistedUser);
         setUsers((current) => {
           const withoutUser = current.filter((user) => user.uid !== persistedUser.uid);
@@ -254,8 +257,11 @@ export function AppShell({ initialUser }: AppShellProps) {
         setSection(defaultSectionForRole(normalizeRole(persistedUser.role)));
         setAuthStatus(copy.signedIn);
       } catch (error) {
+        setAuthUser(null);
+        setSection("standings");
         setAuthError(getFirebaseErrorMessage(error));
-        setAuthStatus(copy.authError);
+        setAuthStatus(copy.signedOut);
+        await signOutOfGoogle().catch(() => undefined);
       }
     })
       .then((nextUnsubscribe) => {

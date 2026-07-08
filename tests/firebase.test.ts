@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockAuth = {};
 const mockDb = {};
@@ -11,6 +11,17 @@ const setDocMock = vi.fn();
 const signInWithPopupMock = vi.fn();
 const signOutMock = vi.fn();
 const onAuthStateChangedMock = vi.fn();
+const initializeAppCheckMock = vi.fn();
+const appCheckProviderMock = vi.fn((siteKey: string) => ({ siteKey }));
+const googleProviderInstances: Array<{ setCustomParameters: ReturnType<typeof vi.fn> }> = [];
+
+const GoogleAuthProviderMock = vi.fn(() => {
+  const instance = {
+    setCustomParameters: vi.fn()
+  };
+  googleProviderInstances.push(instance);
+  return instance;
+});
 
 vi.mock("firebase/app", () => ({
   getApps: vi.fn(() => []),
@@ -19,10 +30,15 @@ vi.mock("firebase/app", () => ({
 
 vi.mock("firebase/auth", () => ({
   getAuth: vi.fn(() => mockAuth),
-  GoogleAuthProvider: vi.fn(),
+  GoogleAuthProvider: GoogleAuthProviderMock,
   onAuthStateChanged: onAuthStateChangedMock,
   signInWithPopup: signInWithPopupMock,
   signOut: signOutMock
+}));
+
+vi.mock("firebase/app-check", () => ({
+  ReCaptchaEnterpriseProvider: appCheckProviderMock,
+  initializeAppCheck: initializeAppCheckMock
 }));
 
 vi.mock("firebase/firestore", () => ({
@@ -38,15 +54,15 @@ vi.mock("firebase/firestore", () => ({
 describe("Firebase helpers", () => {
   let firebase: typeof import("@/lib/firebase");
 
-  beforeAll(async () => {
+  beforeEach(async () => {
+    vi.resetModules();
     vi.stubEnv("NEXT_PUBLIC_FIREBASE_API_KEY", "test-key");
     vi.stubEnv("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", "test.firebaseapp.com");
     vi.stubEnv("NEXT_PUBLIC_FIREBASE_PROJECT_ID", "test-project");
     vi.stubEnv("NEXT_PUBLIC_FIREBASE_APP_ID", "test-app");
+    vi.stubEnv("NEXT_PUBLIC_ALLOWED_EMAIL_DOMAIN", "soongsil.net");
+    vi.stubEnv("NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY", "site-key");
     firebase = await import("@/lib/firebase");
-  });
-
-  beforeEach(() => {
     getDocMock.mockReset();
     collectionMock.mockClear();
     firestoreOnSnapshotMock.mockReset();
@@ -55,6 +71,11 @@ describe("Firebase helpers", () => {
     signInWithPopupMock.mockReset();
     signOutMock.mockReset();
     onAuthStateChangedMock.mockReset();
+    initializeAppCheckMock.mockReset();
+    appCheckProviderMock.mockClear();
+    GoogleAuthProviderMock.mockClear();
+    googleProviderInstances.length = 0;
+    delete (globalThis as typeof globalThis & { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean }).FIREBASE_APPCHECK_DEBUG_TOKEN;
   });
 
   it("normalizes legacy admin records to organizer", () => {
@@ -71,6 +92,13 @@ describe("Firebase helpers", () => {
 
   it("explains event write permission failures using the canonical user document", () => {
     expect(firebase.getFirebaseErrorMessage({ code: "permission-denied" })).toContain("users/{auth.uid}");
+  });
+
+  it("rejects missing, unverified, or non-school Google accounts", () => {
+    expect(() => firebase.assertAuthorizedFirebaseUser({ email: null, emailVerified: true })).toThrow("Google account email is required.");
+    expect(() => firebase.assertAuthorizedFirebaseUser({ email: "judge@soongsil.net", emailVerified: false })).toThrow("Google account email must be verified.");
+    expect(() => firebase.assertAuthorizedFirebaseUser({ email: "judge@example.com", emailVerified: true })).toThrow("Google account must use @soongsil.net.");
+    expect(() => firebase.assertAuthorizedFirebaseUser({ email: "judge@soongsil.net", emailVerified: true })).not.toThrow();
   });
 
   it("reuses an existing user record and preserves its role", async () => {
@@ -142,6 +170,46 @@ describe("Firebase helpers", () => {
     await firebase.signOutOfGoogle();
 
     expect(signOutMock).toHaveBeenCalledWith(mockAuth);
+  });
+
+  it("initializes App Check and hints Google sign-in to the school domain", async () => {
+    signInWithPopupMock.mockResolvedValue({
+      user: {
+        uid: "school-user-1",
+        email: "judge@soongsil.net",
+        emailVerified: true,
+        displayName: "Judge",
+        photoURL: null
+      }
+    });
+
+    const user = await firebase.signInWithGoogle();
+
+    expect(user.email).toBe("judge@soongsil.net");
+    expect(initializeAppCheckMock).toHaveBeenCalledOnce();
+    expect(appCheckProviderMock).toHaveBeenCalledWith("site-key");
+    expect(googleProviderInstances[0]?.setCustomParameters).toHaveBeenCalledWith({
+      hd: "soongsil.net",
+      prompt: "select_account"
+    });
+    expect((globalThis as typeof globalThis & { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean }).FIREBASE_APPCHECK_DEBUG_TOKEN).toBe(true);
+  });
+
+  it("signs out rejected Google accounts before creating a user record", async () => {
+    signInWithPopupMock.mockResolvedValue({
+      user: {
+        uid: "external-user-1",
+        email: "judge@example.com",
+        emailVerified: true,
+        displayName: "External Judge",
+        photoURL: null
+      }
+    });
+    signOutMock.mockResolvedValue(undefined);
+
+    await expect(firebase.signInWithGoogle()).rejects.toThrow("Google account must use @soongsil.net.");
+    expect(signOutMock).toHaveBeenCalledWith(mockAuth);
+    expect(setDocMock).not.toHaveBeenCalled();
   });
 
   it("writes events, participants, scorecards, and role updates to Firestore", async () => {

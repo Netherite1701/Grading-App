@@ -2,13 +2,14 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Event, Participant, Role, StoredRole, User } from "@/lib/types";
+import type { Role, StoredRole, User } from "@/lib/types";
 
 const firebaseUser = {
   uid: "firebase-user-1",
-  email: "firebase@example.com",
+  email: "firebase@soongsil.net",
   displayName: "Firebase User",
-  photoURL: null
+  photoURL: null,
+  emailVerified: true
 };
 
 const guestUser: User = {
@@ -25,32 +26,15 @@ const organizerUser: User = {
   updatedAt: "2026-07-02T00:00:00.000Z"
 };
 
-const event: Event = {
-  id: "firebase-event-1",
-  name: "Firebase Event",
-  description: "Synced event",
-  status: "draft",
-  gradingType: "rubric",
-  ownerId: organizerUser.uid,
-  ownerEmail: organizerUser.email,
-  criteria: [],
-  createdAt: "2026-07-01T00:00:00.000Z",
-  updatedAt: "2026-07-01T00:00:00.000Z"
-};
-
-const participant: Participant = {
-  id: "team-1",
-  name: "Team One",
-  createdAt: "2026-07-01T00:00:00.000Z",
-  updatedAt: "2026-07-01T00:00:00.000Z"
-};
-
 const firebaseHarness = vi.hoisted(() => ({
   appDataListener: undefined as ((data: unknown) => void) | undefined,
-  saveFirebaseEvent: vi.fn()
+  assertAuthorizedFirebaseUser: vi.fn(),
+  saveFirebaseEvent: vi.fn(),
+  signOutOfGoogle: vi.fn()
 }));
 
 vi.mock("@/lib/firebase", () => ({
+  assertAuthorizedFirebaseUser: firebaseHarness.assertAuthorizedFirebaseUser,
   getFirebaseErrorMessage: (error: unknown) => (error instanceof Error ? error.message : "Firebase request failed."),
   isFirebaseConfigured: () => true,
   normalizeRole: (role: StoredRole | undefined): Role => {
@@ -68,7 +52,7 @@ vi.mock("@/lib/firebase", () => ({
   saveFirebaseParticipant: vi.fn(),
   saveFirebaseScorecard: vi.fn(),
   signInWithGoogle: vi.fn(async () => firebaseUser),
-  signOutOfGoogle: vi.fn(),
+  signOutOfGoogle: firebaseHarness.signOutOfGoogle,
   subscribeToFirebaseAppData: vi.fn(async (onData: (data: unknown) => void) => {
     firebaseHarness.appDataListener = onData;
     onData({
@@ -86,8 +70,11 @@ vi.mock("@/lib/firebase", () => ({
 describe("AppShell Firebase role sync", () => {
   beforeEach(() => {
     firebaseHarness.appDataListener = undefined;
+    firebaseHarness.assertAuthorizedFirebaseUser.mockReset();
     firebaseHarness.saveFirebaseEvent.mockReset();
     firebaseHarness.saveFirebaseEvent.mockResolvedValue(undefined);
+    firebaseHarness.signOutOfGoogle.mockReset();
+    firebaseHarness.signOutOfGoogle.mockResolvedValue(undefined);
     window.localStorage.clear();
     window.localStorage.setItem("grading-program-language", "en");
     document.documentElement.lang = "";
@@ -162,5 +149,20 @@ describe("AppShell Firebase role sync", () => {
     expect(screen.getByRole("option", { name: "Rejected But Visible Event" })).toBeInTheDocument();
     expect(screen.getByLabelText("Event name")).toHaveValue("Rejected But Visible Event");
     expect(await screen.findByText(/Event stayed as a local draft because Firebase rejected the save/)).toBeInTheDocument();
+  });
+
+  it("signs the session back out when Firebase rejects the restored account", async () => {
+    firebaseHarness.assertAuthorizedFirebaseUser.mockImplementation(() => {
+      throw new Error("학교 Google Workspace 계정(@soongsil.net)으로만 로그인할 수 있습니다.");
+    });
+
+    const { AppShell } = await import("@/components/app-shell");
+
+    render(<AppShell />);
+
+    expect(await screen.findByText("학교 Google Workspace 계정(@soongsil.net)으로만 로그인할 수 있습니다.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(firebaseHarness.signOutOfGoogle).toHaveBeenCalled();
   });
 });
