@@ -264,6 +264,23 @@ describe("AppShell", () => {
     expect(screen.queryByText("Select a letter to set the score.")).not.toBeInTheDocument();
   });
 
+  it("lets organizers delete the selected event and clears its teams from view", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await renderEnglishShell(<AppShell initialUser={organizerUser} />);
+
+    expect(screen.getByRole("option", { name: "LaunchPad Demo Night" })).toBeInTheDocument();
+    expect(screen.getByText("Team Solstice")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Delete event" }));
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("LaunchPad Demo Night"));
+    expect(screen.queryByRole("option", { name: "LaunchPad Demo Night" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Metro Science Fair" })).toBeInTheDocument();
+    expect(screen.queryByText("Team Solstice")).not.toBeInTheDocument();
+    expect(screen.getByText("Event deleted.")).toBeInTheDocument();
+  });
+
   it("lets organizers edit and delete teams", async () => {
     const user = userEvent.setup();
     await renderEnglishShell(<AppShell initialUser={organizerUser} />);

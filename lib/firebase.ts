@@ -337,6 +337,11 @@ export async function saveFirebaseEvent(event: Event) {
   return setDoc(doc(await getFirebaseDb(), "events", event.id), withoutUndefinedFields(event), { merge: true });
 }
 
+export async function deleteFirebaseEvent(eventId: string) {
+  const { deleteDoc, doc } = await import("firebase/firestore");
+  return deleteDoc(doc(await getFirebaseDb(), "events", eventId));
+}
+
 export async function saveFirebaseParticipant(eventId: string, participant: Participant) {
   const { doc, setDoc } = await import("firebase/firestore");
   return setDoc(doc(await getFirebaseDb(), "participants", participant.id), withoutUndefinedFields({ ...participant, eventId }), { merge: true });

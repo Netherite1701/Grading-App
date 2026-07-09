@@ -6,6 +6,7 @@ import { buildParticipantTemplateCsv, buildStandingsCsv, parseParticipantsCsv } 
 import {
   assertAuthorizedAppUser,
   createNewUserRecord,
+  deleteFirebaseEvent,
   deleteFirebaseParticipant,
   getFirebaseErrorMessage,
   isFirebaseConfigured,
@@ -699,6 +700,56 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
         const message = getFirebaseErrorMessage(error);
         setAuthError(message);
         setEventCreateMessage(copy.eventCreateFailed.replace("{error}", message));
+      }
+    })();
+  };
+
+  const deleteEvent = () => {
+    if (!activeEvent || !canOrganize) return;
+    if (typeof window !== "undefined" && !window.confirm(copy.deleteEventConfirm(activeEvent.name))) return;
+
+    const deletedEvent = activeEvent;
+    const deletedParticipants = participantsByEvent[deletedEvent.id] ?? [];
+    const nextEvents = events.filter((event) => event.id !== deletedEvent.id);
+    const nextEvent = nextEvents[0];
+
+    optimisticEventsRef.current = optimisticEventsRef.current.filter((event) => event.id !== deletedEvent.id);
+    setEvents(nextEvents);
+    setParticipantsByEvent((current) => {
+      const next = { ...current };
+      delete next[deletedEvent.id];
+      return next;
+    });
+    setScorecards((current) => current.filter((card) => card.eventId !== deletedEvent.id));
+    setSelectedParticipantId("");
+    setDraftScores(nextEvent ? getDefaultScores(nextEvent.criteria) : {});
+    setNotes("");
+    setScorecardDirty(false);
+    setScoreSaveState("idle");
+    setActiveEventId(nextEvent?.id ?? "");
+    if (nextEvent) {
+      syncEventForm(nextEvent);
+    } else {
+      setOrganizerName("");
+      setOrganizerDescription("");
+      setOrganizerStatus("draft");
+      setOrganizerGradingType("rubric");
+      setOrganizerTrimExtremes(false);
+      setOrganizerHideRubricDescriptions(false);
+    }
+    setEventCreateMessage(firebaseAvailable ? copy.eventDeleteSaved : copy.eventDeleteSaved);
+
+    void (async () => {
+      if (!firebaseAvailable) return;
+      try {
+        await Promise.all([
+          deleteFirebaseEvent(deletedEvent.id),
+          ...deletedParticipants.map((participant) => deleteFirebaseParticipant(participant.id))
+        ]);
+      } catch (error) {
+        const message = getFirebaseErrorMessage(error);
+        setAuthError(message);
+        setEventCreateMessage(copy.eventDeleteFailed.replace("{error}", message));
       }
     })();
   };
@@ -1502,11 +1553,17 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                       <h2>{copy.eventBuilder}</h2>
                       <p>{copy.eventBuilderDesc}</p>
                     </div>
-                    <button type="button" className="button" onClick={createEvent}>
-                      {copy.createEvent}
-                    </button>
+                    <div className="button-row organizer-event-actions">
+                      <button type="button" className="button" onClick={createEvent}>
+                        {copy.createEvent}
+                      </button>
+                      <button type="button" className="button secondary" onClick={deleteEvent} disabled={!activeEvent}>
+                        {copy.deleteEvent}
+                      </button>
+                    </div>
                   </div>
                   {eventCreateMessage ? <div className="footer-note">{eventCreateMessage}</div> : null}
+                  <div className="footer-note">{copy.deleteEventDesc}</div>
                   <div className="grid-2">
                     <div>
                       <label className="label" htmlFor="event-name">

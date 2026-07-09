@@ -355,9 +355,11 @@ describe("Firebase helpers", () => {
     expect(setDocMock).toHaveBeenCalledWith(expect.objectContaining({ name: "appConfig", id: "translations" }), expect.objectContaining({ overrides: { ko: { appTitle: "게시된 제목" } } }), { merge: true });
   });
 
-  it("deletes participants from Firestore", async () => {
+  it("deletes events and participants from Firestore", async () => {
+    await firebase.deleteFirebaseEvent("event-1");
     await firebase.deleteFirebaseParticipant("team-1");
 
+    expect(deleteDocMock).toHaveBeenCalledTimes(2);
     expect(deleteDocMock).toHaveBeenCalledWith(mockUserRef);
   });
 
