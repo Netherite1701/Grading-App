@@ -593,59 +593,85 @@ button {
 }
 
 .judge-criteria-list {
-  gap: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  align-items: start;
+  gap: 12px;
 }
 
 .judge-criterion-card {
-  padding: 20px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 14px;
+}
+
+.judge-criterion-card .criterion-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.judge-criterion-card .footer-note {
+  margin-top: 4px !important;
+  font-size: 0.86rem;
+  line-height: 1.35;
 }
 
 .judge-workspace-dedicated .criterion-top strong {
-  font-size: 1.35rem;
+  font-size: 1.12rem;
 }
 
 .judge-workspace-dedicated .criterion-top span {
-  font-size: 1rem;
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 
 .judge-grade-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(72px, 1fr));
+  grid-template-columns: repeat(5, minmax(48px, 1fr));
+  gap: 8px;
+  margin-top: 8px !important;
 }
 
 .judge-grade-button {
-  min-height: 72px;
+  min-height: 54px;
   justify-content: center;
   align-items: center;
-  border-radius: 16px;
-  font-size: 2rem;
+  padding: 6px 8px;
+  border-radius: 12px;
+  font-size: 1.6rem;
   font-weight: 900;
 }
 
 .judge-range-row {
-  grid-template-columns: minmax(0, 1fr) 132px;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 10px;
+  margin-top: 8px;
 }
 
 .selected-grade-field {
-  min-height: 64px;
+  min-height: 50px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  font-size: 1.16rem;
+  gap: 10px;
+  padding: 10px 12px;
+  font-size: 1rem;
 }
 
 .selected-grade-field strong {
-  font-size: 1.8rem;
+  font-size: 1.45rem;
 }
 
 .judge-range {
-  min-height: 42px;
+  min-height: 34px;
 }
 
 .judge-score-input {
-  min-height: 64px;
-  font-size: 1.35rem;
+  min-height: 50px;
+  padding: 10px 12px;
+  font-size: 1.16rem;
   font-weight: 800;
   text-align: center;
 }
@@ -907,7 +933,8 @@ button {
 
 @media (max-width: 620px) {
   .judge-grade-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(42px, 1fr));
+    gap: 6px;
   }
 
   .judge-range-row {
