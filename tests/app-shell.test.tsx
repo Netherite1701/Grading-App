@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { renderToString } from "react-dom/server";
@@ -73,15 +73,30 @@ describe("AppShell", () => {
     expect(sessionPanel.open).toBe(true);
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
 
+    const saveButton = screen.getByRole("button", { name: "Save scorecard" });
+    const firstGradeButton = screen.getByRole("button", { name: "Innovation grade A" });
+    expect(saveButton.compareDocumentPosition(firstGradeButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
     await user.click(screen.getByRole("button", { name: "Team Helios" }));
     await user.click(screen.getByRole("button", { name: "Innovation grade E" }));
 
     expect(screen.getByText("Team Helios is selected for scoring.")).toBeInTheDocument();
+    const headerActions = document.querySelector(".judge-header-actions") as HTMLElement;
+    expect(within(headerActions).getByText("Auto saving...")).toBeInTheDocument();
+
+    const heliosCard = screen.getByRole("button", { name: "Team Helios" });
+    await waitFor(() => {
+      expect(within(headerActions).getByText("Saved")).toBeInTheDocument();
+      expect(within(heliosCard).getByText("Saved")).toBeInTheDocument();
+    });
 
     const notes = screen.getByLabelText("Feedback notes");
     await user.clear(notes);
     await user.type(notes, "Needs a sharper opening and stronger demo pacing.");
-    await user.click(screen.getByRole("button", { name: "Save scorecard" }));
+    expect(within(headerActions).getByText("Auto saving...")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(headerActions).getByText("Saved")).toBeInTheDocument();
+    });
   });
 
   it("renders the dedicated judge route as a stripped tablet scoring screen", async () => {

@@ -540,6 +540,21 @@ button {
   font-size: 1.08rem;
 }
 
+.judge-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.judge-save-action {
+  min-height: 54px;
+  min-width: 170px;
+  justify-content: center;
+  font-size: 1.08rem;
+}
+
 .judge-team-section h3 {
   margin: 0;
   font-size: 1.45rem;
@@ -926,6 +941,10 @@ button {
     padding: 22px;
   }
 
+  .judge-header-actions {
+    justify-content: flex-start;
+  }
+
   .flow-row {
     grid-template-columns: 1fr;
   }
@@ -942,6 +961,10 @@ button {
   }
 
   .judge-action {
+    width: 100%;
+  }
+
+  .judge-save-action {
     width: 100%;
   }
 

@@ -233,10 +233,14 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
   const [teacherQrMessage, setTeacherQrMessage] = useState("");
   const [section, setSection] = useState<SectionId>(defaultSectionForRole(normalizeRole(authUser?.role)));
   const [isJudgeSessionOpen, setJudgeSessionOpen] = useState(false);
+  const [isScorecardDirty, setScorecardDirty] = useState(false);
+  const [scoreSaveState, setScoreSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [organizerTab, setOrganizerTab] = useState<OrganizerTabId>("setup");
   const [expandedCriterionId, setExpandedCriterionId] = useState<string | null>(initialEvents[0]?.criteria[0]?.id ?? null);
   const optimisticEventsRef = useRef<Event[]>([]);
   const teacherQrSignInStartedRef = useRef(false);
+  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scoreDraftVersionRef = useRef(0);
 
   const role = normalizeRole(authUser?.role);
   const isDeveloper = role === "developer";
@@ -573,14 +577,50 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
     setOrganizerTrimExtremes(event.dropHighestAndLowestJudgeScores ?? false);
   };
 
+  const clearAutoSaveTimer = () => {
+    if (!autoSaveTimeoutRef.current) return;
+    clearTimeout(autoSaveTimeoutRef.current);
+    autoSaveTimeoutRef.current = null;
+  };
+
+  const markScorecardDirty = () => {
+    scoreDraftVersionRef.current += 1;
+    setScorecardDirty(true);
+    setScoreSaveState("idle");
+  };
+
+  const updateDraftScore = (criterionId: string, score: number, max: number) => {
+    setDraftScores((value) => ({
+      ...value,
+      [criterionId]: clampScore(score, max)
+    }));
+    markScorecardDirty();
+  };
+
+  const updateJudgeNotes = (value: string) => {
+    setNotes(value);
+    markScorecardDirty();
+  };
+
+  const resetJudgeDraftScores = () => {
+    if (!activeEvent) return;
+    setDraftScores(getDefaultScores(activeEvent.criteria));
+    markScorecardDirty();
+  };
+
   const selectParticipant = (participantId: string) => {
     if (!activeEvent) return;
     const nextParticipant = participants.find((participant) => participant.id === participantId) ?? participants[0];
     if (!nextParticipant) return;
+    if (isScorecardDirty) {
+      void saveJudgeScorecard();
+    }
     setSelectedParticipantId(nextParticipant.id);
     const card = getJudgeScorecard(activeEvent.id, nextParticipant.id, judgeId, scorecards);
     setDraftScores(card?.scores ?? getDefaultScores(activeEvent.criteria));
     setNotes(card?.notes ?? "");
+    setScorecardDirty(false);
+    setScoreSaveState(card ? "saved" : "idle");
   };
 
   useEffect(() => {
@@ -594,6 +634,8 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
     const scorecard = nextParticipantId ? getJudgeScorecard(activeEvent.id, nextParticipantId, judgeId, scorecards) : undefined;
     setDraftScores(scorecard?.scores ?? getDefaultScores(activeEvent.criteria));
     setNotes(scorecard?.notes ?? "");
+    setScorecardDirty(false);
+    setScoreSaveState(scorecard ? "saved" : "idle");
   }, [activeEventId]);
 
   useEffect(() => {
@@ -602,6 +644,9 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
   }, [activeEventId, activeEvent?.criteria.length]);
 
   const updateSelectedEvent = (eventId: string) => {
+    if (isScorecardDirty) {
+      void saveJudgeScorecard();
+    }
     const nextEvent = events.find((event) => event.id === eventId);
     setActiveEventId(eventId);
     if (nextEvent) {
@@ -613,9 +658,13 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
         const scorecard = getJudgeScorecard(eventId, nextParticipantId, judgeId, scorecards);
         setDraftScores(scorecard?.scores ?? getDefaultScores(nextEvent.criteria));
         setNotes(scorecard?.notes ?? "");
+        setScorecardDirty(false);
+        setScoreSaveState(scorecard ? "saved" : "idle");
       } else {
         setDraftScores(getDefaultScores(nextEvent.criteria));
         setNotes("");
+        setScorecardDirty(false);
+        setScoreSaveState("idle");
       }
     }
   };
@@ -703,10 +752,12 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
     void persistFirebaseWrite(() => saveFirebaseEvent(nextEvent));
   };
 
-  const saveJudgeScorecard = () => {
+  const saveJudgeScorecard = async () => {
     if (!activeEvent || !selectedParticipant || !canJudge) return;
+    clearAutoSaveTimer();
 
     const totalScore = calculateTotals(activeEvent, draftScores).rawScore;
+    const savedDraftVersion = scoreDraftVersionRef.current;
     const nextCard: Scorecard = {
       id: `${authUser?.uid ?? "judge-1"}_${selectedParticipant.id}`,
       eventId: activeEvent.id,
@@ -720,12 +771,28 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
       updatedAt: new Date().toISOString()
     };
 
+    setScoreSaveState("saving");
     setScorecards((current) => {
       const filtered = current.filter((item) => item.id !== nextCard.id);
       return [...filtered, nextCard];
     });
-    void persistFirebaseWrite(() => saveFirebaseScorecard(nextCard));
+    setScorecardDirty(false);
+    await persistFirebaseWrite(() => saveFirebaseScorecard(nextCard));
+    if (scoreDraftVersionRef.current === savedDraftVersion) {
+      setScoreSaveState("saved");
+    }
   };
+
+  useEffect(() => {
+    if (!isScorecardDirty || !activeEvent || !selectedParticipant || !canJudge) return;
+
+    clearAutoSaveTimer();
+    autoSaveTimeoutRef.current = setTimeout(() => {
+      void saveJudgeScorecard();
+    }, 700);
+
+    return clearAutoSaveTimer;
+  }, [isScorecardDirty, draftScores, notes, activeEvent?.id, selectedParticipant?.id, canJudge]);
 
   const addParticipant = () => {
     if (!activeEvent || !newParticipantName.trim() || !canOrganize) return;
@@ -1008,7 +1075,8 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
       );
     }
 
-    const selectedStatus = existingScorecard ? "Saved" : "Not scored";
+    const selectedStatus = scoreSaveState === "saving" ? "Saving..." : isScorecardDirty ? "Auto saving..." : existingScorecard ? "Saved" : "Not scored";
+    const selectedStatusClass = scoreSaveState === "saving" ? "indigo" : isScorecardDirty ? "amber" : existingScorecard ? "emerald" : "amber";
 
     return (
       <section className={`judge-workspace ${dedicated ? "judge-workspace-dedicated" : ""}`} aria-label="Judge scoring interface">
@@ -1019,7 +1087,16 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                 <h2>{copy.judgeWorkspace}</h2>
                 <p>{selectedParticipant ? copy.judgeSelected(selectedParticipant.name) : "Select a team to start scoring."}</p>
               </div>
-              {selectedParticipant ? <span className={`badge ${existingScorecard ? "emerald" : "amber"}`}>{selectedStatus}</span> : null}
+              {selectedParticipant ? (
+                <div className="judge-header-actions">
+                  <span className={`badge ${selectedStatusClass}`} aria-live="polite">
+                    {selectedStatus}
+                  </span>
+                  <button className="button judge-save-action" onClick={() => void saveJudgeScorecard()}>
+                    {copy.saveScorecard}
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             <div className="judge-team-section">
@@ -1091,12 +1168,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                                 aria-label={`${criterion.name} grade ${level.label}`}
                                 aria-pressed={selectedRubricLevel?.label === level.label}
                                 className={`chip judge-grade-button ${selectedRubricLevel?.label === level.label ? "active" : ""}`}
-                                onClick={() =>
-                                  setDraftScores((value) => ({
-                                    ...value,
-                                    [criterion.id]: clampScore(level.points, max)
-                                  }))
-                                }
+                                onClick={() => updateDraftScore(criterion.id, level.points, max)}
                               >
                                 {level.label}
                               </button>
@@ -1123,12 +1195,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                                 max={max}
                                 step={0.5}
                                 value={current}
-                                onChange={(event) =>
-                                  setDraftScores((value) => ({
-                                    ...value,
-                                    [criterion.id]: clampScore(Number(event.target.value), max)
-                                  }))
-                                }
+                                onChange={(event) => updateDraftScore(criterion.id, Number(event.target.value), max)}
                               />
                               <input
                                 className="field judge-score-input"
@@ -1137,12 +1204,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                                 max={max}
                                 step={0.5}
                                 value={current}
-                                onChange={(event) =>
-                                  setDraftScores((value) => ({
-                                    ...value,
-                                    [criterion.id]: clampScore(Number(event.target.value), max)
-                                  }))
-                                }
+                                onChange={(event) => updateDraftScore(criterion.id, Number(event.target.value), max)}
                               />
                             </>
                           )}
@@ -1155,14 +1217,11 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                   <label className="label judge-label" htmlFor="judge-notes">
                     {copy.feedbackNotes}
                   </label>
-                  <textarea id="judge-notes" className="textarea judge-notes" maxLength={2000} value={notes} onChange={(event) => setNotes(event.target.value)} />
+                  <textarea id="judge-notes" className="textarea judge-notes" maxLength={2000} value={notes} onChange={(event) => updateJudgeNotes(event.target.value)} />
                   <div className="footer-note">{notes.length}/2000 characters</div>
                 </div>
                 <div className="button-row judge-actions">
-                  <button className="button judge-action" onClick={saveJudgeScorecard}>
-                    {copy.saveScorecard}
-                  </button>
-                  <button className="button secondary judge-action" onClick={() => setDraftScores(getDefaultScores(activeEvent.criteria))}>
+                  <button className="button secondary judge-action" onClick={resetJudgeDraftScores}>
                     {copy.resetScores}
                   </button>
                 </div>
