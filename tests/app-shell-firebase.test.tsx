@@ -235,8 +235,17 @@ describe("AppShell Firebase role sync", () => {
     await waitFor(() => {
       expect(firebaseHarness.signInWithTeacherQr).toHaveBeenCalled();
     });
+    expect(await screen.findByRole("heading", { name: "Judge workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Event grading console" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Professor Kim" })).not.toBeInTheDocument();
+
+    const sessionSummary = screen.getByText("Session / login");
+    const sessionPanel = sessionSummary.closest("details") as HTMLDetailsElement;
+    expect(sessionPanel.open).toBe(false);
+
+    fireEvent.click(sessionSummary);
+    expect(sessionPanel.open).toBe(true);
     expect(await screen.findByRole("heading", { name: "Professor Kim" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Judge workspace" })).toBeInTheDocument();
   });
 
   it("publishes translation overrides to Firebase", async () => {

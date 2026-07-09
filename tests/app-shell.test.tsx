@@ -52,12 +52,25 @@ describe("AppShell", () => {
     const user = userEvent.setup();
     await renderEnglishShell(<AppShell initialUser={judgeUser} />);
 
+    const scoring = screen.getByRole("region", { name: "Judge scoring interface" });
+    const eventSelection = screen.getByRole("region", { name: "Judge event selection" });
+    const sessionSummary = screen.getByText("Session / login");
+    const sessionPanel = sessionSummary.closest("details") as HTMLDetailsElement;
+
     expect(screen.getByRole("heading", { name: "Judge workspace" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Choose team" })).toBeInTheDocument();
+    expect(scoring.compareDocumentPosition(eventSelection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(eventSelection.compareDocumentPosition(sessionPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Event grading console" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Score breakdown" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Choose team" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Organizer View" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign in with Google" })).not.toBeInTheDocument();
+    expect(sessionPanel.open).toBe(false);
+    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+
+    await user.click(sessionSummary);
+    expect(sessionPanel.open).toBe(true);
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Team Helios" }));
@@ -76,15 +89,20 @@ describe("AppShell", () => {
 
     const scoring = await screen.findByRole("region", { name: "Judge scoring interface" });
     const eventSelection = screen.getByRole("region", { name: "Judge event selection" });
+    const sessionSummary = screen.getByText("Session / login");
+    const sessionPanel = sessionSummary.closest("details") as HTMLDetailsElement;
 
     expect(scoring.compareDocumentPosition(eventSelection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(eventSelection.compareDocumentPosition(sessionPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(await screen.findByRole("button", { name: "Team Solstice" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Team Helios" })).toBeInTheDocument();
     expect(screen.getAllByText("Saved").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Not scored").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("heading", { name: "Event grading console" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Score breakdown" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Organizer View" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Developer tools" })).not.toBeInTheDocument();
+    expect(sessionPanel.open).toBe(false);
     expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
   });
 

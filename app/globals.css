@@ -512,6 +512,10 @@ button {
   line-height: 1.5;
 }
 
+.session-language-field {
+  margin-top: 12px;
+}
+
 .judge-shell {
   max-width: 1180px;
   display: grid;
@@ -668,6 +672,62 @@ button {
 .judge-event-panel .select {
   min-height: 58px;
   font-size: 1.12rem;
+}
+
+.judge-session-panel {
+  overflow: hidden;
+  box-shadow: 0 18px 46px rgba(1, 6, 18, 0.28);
+}
+
+.judge-session-summary {
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 20px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  font-size: 1.06rem;
+  font-weight: 800;
+}
+
+.judge-session-summary::-webkit-details-marker {
+  display: none;
+}
+
+.judge-session-summary::after {
+  content: "+";
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(8, 13, 23, 0.58);
+}
+
+.judge-session-panel[open] .judge-session-summary {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.judge-session-panel[open] .judge-session-summary::after {
+  content: "-";
+}
+
+.judge-session-summary .badge {
+  margin-left: auto;
+}
+
+.judge-session-content {
+  display: grid;
+  gap: 14px;
+}
+
+.judge-session-content .section-header h2 {
+  font-size: 1.2rem;
 }
 
 .organizer-tabs-panel .panel-inner {
@@ -856,5 +916,14 @@ button {
 
   .judge-action {
     width: 100%;
+  }
+
+  .judge-session-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .judge-session-summary .badge {
+    margin-left: 0;
   }
 }

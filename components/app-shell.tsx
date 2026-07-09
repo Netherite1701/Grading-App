@@ -232,6 +232,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
   const [teacherQrName, setTeacherQrName] = useState("");
   const [teacherQrMessage, setTeacherQrMessage] = useState("");
   const [section, setSection] = useState<SectionId>(defaultSectionForRole(normalizeRole(authUser?.role)));
+  const [isJudgeSessionOpen, setJudgeSessionOpen] = useState(false);
   const [organizerTab, setOrganizerTab] = useState<OrganizerTabId>("setup");
   const [expandedCriterionId, setExpandedCriterionId] = useState<string | null>(initialEvents[0]?.criteria[0]?.id ?? null);
   const optimisticEventsRef = useRef<Event[]>([]);
@@ -241,6 +242,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
   const isDeveloper = role === "developer";
   const canJudge = role === "judge" || isDeveloper;
   const canOrganize = role === "organizer" || isDeveloper;
+  const isJudgeOnlyExperience = isJudgeSurface || (role === "judge" && !isDeveloper);
   const activeSection = isJudgeSurface ? "judge" : isDeveloper ? section : defaultSectionForRole(role);
   const activeEvent = events.find((event) => event.id === activeEventId) ?? events[0];
   const teacherQrLoginUrl = firebaseAvailable ? buildTeacherQrLoginUrl(activeEvent?.id ?? "", teacherQrName) : "";
@@ -895,10 +897,61 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
       await signOutOfGoogle();
     }
     const useLocalDemo = !firebaseAvailable && canUseLocalDemoAccount();
-    setAuthUser(useLocalDemo ? (isJudgeSurface ? demoJudge : demoDeveloper) : null);
-    setSection(useLocalDemo ? (isJudgeSurface ? "judge" : "developer") : "standings");
+    setAuthUser(useLocalDemo ? (isJudgeOnlyExperience ? demoJudge : demoDeveloper) : null);
+    setSection(useLocalDemo ? (isJudgeOnlyExperience ? "judge" : "developer") : "standings");
     setAuthStatus(useLocalDemo ? copy.demoMode : copy.signedOut);
   };
+
+  const renderSessionControls = (languageSelectId: string, className = "criterion-card") => (
+    <div className={className}>
+      <div className="section-header">
+        <div>
+          <h2>{authUser?.displayName ?? (firebaseAvailable ? copy.signedOut : copy.firebaseSetupRequired)}</h2>
+          <p>{authUser?.email ?? authStatus}</p>
+        </div>
+        <span className={`badge ${firebaseAvailable ? "emerald" : "amber"}`}>{firebaseAvailable ? copy.firebase : copy.local}</span>
+      </div>
+      {authError ? <div className="footer-note">{authError}</div> : null}
+      {teacherQrMessage ? <div className="footer-note">{teacherQrMessage}</div> : null}
+      <div className="button-row">
+        {!authUser && firebaseAvailable ? (
+          <button className="button" onClick={handleSignIn}>
+            {copy.signIn}
+          </button>
+        ) : null}
+        {authUser ? (
+          <button className="button secondary" onClick={handleSignOut}>
+            {copy.signOut}
+          </button>
+        ) : null}
+      </div>
+      <div className="footer-note">
+        {!firebaseAvailable ? copy.firebaseMissing : authUser ? copy.signedInNotice : copy.signInNotice}
+      </div>
+      <div className="field session-language-field">
+        <label className="label" htmlFor={languageSelectId}>
+          {copy.language}
+        </label>
+        <select id={languageSelectId} className="select" value={language} onChange={(event) => setLanguage(event.target.value as AppLanguage)}>
+          {languageOptions.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+
+  const renderJudgeSessionPanel = () => (
+    <details className="panel judge-session-panel" open={isJudgeSessionOpen} onToggle={(event) => setJudgeSessionOpen(event.currentTarget.open)}>
+      <summary className="judge-session-summary">
+        <span>{copy.sessionLogin}</span>
+        <span className={`badge ${authUser ? "emerald" : "amber"}`}>{authUser?.displayName ?? authStatus}</span>
+      </summary>
+      {isJudgeSessionOpen ? <div className="panel-inner">{renderSessionControls("judge-language-select", "judge-session-content")}</div> : null}
+    </details>
+  );
 
   const renderEventSelector = (variant: "sidebar" | "judge") => {
     const selectId = `${variant}-event-select`;
@@ -1290,11 +1343,12 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
     );
   };
 
-  if (isJudgeSurface) {
+  if (isJudgeOnlyExperience) {
     return (
       <main className="app-shell judge-shell">
         {renderJudgeScoring(true)}
         {renderEventSelector("judge")}
+        {renderJudgeSessionPanel()}
       </main>
     );
   }
@@ -1330,44 +1384,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
         </div>
         <div className="panel-inner">
           <div className="stack">
-            <div className="criterion-card">
-              <div className="section-header">
-                <div>
-                  <h2>{authUser?.displayName ?? (firebaseAvailable ? copy.signedOut : copy.firebaseSetupRequired)}</h2>
-                  <p>{authUser?.email ?? authStatus}</p>
-                </div>
-                <span className={`badge ${firebaseAvailable ? "emerald" : "amber"}`}>{firebaseAvailable ? copy.firebase : copy.local}</span>
-              </div>
-              {authError ? <div className="footer-note">{authError}</div> : null}
-              {teacherQrMessage ? <div className="footer-note">{teacherQrMessage}</div> : null}
-              <div className="button-row">
-                {!authUser && firebaseAvailable ? (
-                  <button className="button" onClick={handleSignIn}>
-                    {copy.signIn}
-                  </button>
-                ) : null}
-                {authUser ? (
-                  <button className="button secondary" onClick={handleSignOut}>
-                    {copy.signOut}
-                  </button>
-                ) : null}
-              </div>
-              <div className="footer-note">
-                {!firebaseAvailable ? copy.firebaseMissing : authUser ? copy.signedInNotice : copy.signInNotice}
-              </div>
-              <div className="field" style={{ marginTop: 12 }}>
-                <label className="label" htmlFor="language-select">
-                  {copy.language}
-                </label>
-                <select id="language-select" className="select" value={language} onChange={(event) => setLanguage(event.target.value as AppLanguage)}>
-                  {languageOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            {renderSessionControls("language-select")}
           </div>
         </div>
       </header>
