@@ -68,16 +68,19 @@ describe("AppShell", () => {
     expect(screen.queryByRole("button", { name: "Sign in with Google" })).not.toBeInTheDocument();
     expect(sessionPanel.open).toBe(false);
     expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(screen.getByText("Select a team to start scoring.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save scorecard" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Feedback notes")).not.toBeInTheDocument();
 
     await user.click(sessionSummary);
     expect(sessionPanel.open).toBe(true);
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "Team Helios" }));
     const saveButton = screen.getByRole("button", { name: "Save scorecard" });
     const firstGradeButton = screen.getByRole("button", { name: "Innovation grade A" });
     expect(saveButton.compareDocumentPosition(firstGradeButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Team Helios" }));
     await user.click(screen.getByRole("button", { name: "Innovation grade E" }));
 
     expect(screen.getByText("Team Helios is selected for scoring.")).toBeInTheDocument();
@@ -119,6 +122,9 @@ describe("AppShell", () => {
     expect(screen.queryByRole("heading", { name: "Developer tools" })).not.toBeInTheDocument();
     expect(sessionPanel.open).toBe(false);
     expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(screen.getByText("Select a team to start scoring.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save scorecard" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Feedback notes")).not.toBeInTheDocument();
   });
 
   it("routes an organizer to the event builder and clarifies scoring setup", async () => {
@@ -236,6 +242,24 @@ describe("AppShell", () => {
 
     expect(screen.getByRole("option", { name: "Trimmed Event" })).toBeInTheDocument();
     expect((screen.getByLabelText("Trim highest and lowest judge totals") as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("lets organizers hide rubric descriptions from judge scoring", async () => {
+    const user = userEvent.setup();
+    await renderEnglishShell(<AppShell />);
+
+    await user.click(screen.getByRole("button", { name: "Organizer View" }));
+    const hideDescriptions = screen.getByLabelText("Hide A-E descriptions for judges") as HTMLInputElement;
+    expect(hideDescriptions.checked).toBe(false);
+
+    await user.click(hideDescriptions);
+    await user.click(screen.getByRole("button", { name: "Save event" }));
+    await user.click(screen.getByRole("button", { name: "Judge View" }));
+    await user.click(screen.getByRole("button", { name: "Team Helios" }));
+
+    expect(screen.getByRole("button", { name: "Innovation grade A" })).toBeInTheDocument();
+    expect(screen.queryByText("Choose a letter grade. A is the strongest score and E is the weakest.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Select a letter to set the score.")).not.toBeInTheDocument();
   });
 
   it("lets organizers edit and delete teams", async () => {

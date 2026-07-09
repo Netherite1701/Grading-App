@@ -35,6 +35,7 @@ export interface Event {
   status: EventStatus;
   gradingType: GradingType;
   dropHighestAndLowestJudgeScores?: boolean;
+  hideRubricDescriptions?: boolean;
   ownerId: string;
   ownerEmail: string;
   criteria: Criterion[];

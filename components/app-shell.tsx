@@ -108,7 +108,7 @@ function createDefaultCriterion(): Criterion {
   };
 }
 
-function createDraftEvent(owner: User | null, draft?: Partial<Pick<Event, "name" | "description" | "status" | "gradingType" | "dropHighestAndLowestJudgeScores" | "criteria">>): Event {
+function createDraftEvent(owner: User | null, draft?: Partial<Pick<Event, "name" | "description" | "status" | "gradingType" | "dropHighestAndLowestJudgeScores" | "hideRubricDescriptions" | "criteria">>): Event {
   const now = new Date().toISOString();
   const name = draft?.name?.trim() || "Untitled Event";
   const description = draft?.description?.trim() || "New event draft";
@@ -119,6 +119,7 @@ function createDraftEvent(owner: User | null, draft?: Partial<Pick<Event, "name"
     status: draft?.status ?? "draft",
     gradingType: draft?.gradingType ?? "rubric",
     dropHighestAndLowestJudgeScores: draft?.dropHighestAndLowestJudgeScores ?? false,
+    hideRubricDescriptions: draft?.hideRubricDescriptions ?? false,
     ownerId: owner?.uid ?? "demo-owner",
     ownerEmail: owner?.email ?? "demo@local",
     criteria: draft?.criteria?.length ? draft.criteria : [createDefaultCriterion()],
@@ -214,13 +215,14 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
   const [activeEventId, setActiveEventId] = useState(initialEvents[0]?.id ?? "");
   const [scorecards, setScorecards] = useState<Scorecard[]>(initialScorecards);
   const [participantsByEvent, setParticipantsByEvent] = useState<Record<string, Participant[]>>(demoParticipants);
-  const [selectedParticipantId, setSelectedParticipantId] = useState(participantsByEvent[initialEvents[0]?.id ?? ""]?.[0]?.id ?? "");
-  const [notes, setNotes] = useState(initialScorecards[0]?.notes ?? "");
+  const [selectedParticipantId, setSelectedParticipantId] = useState("");
+  const [notes, setNotes] = useState("");
   const [organizerName, setOrganizerName] = useState(initialEvents[0]?.name ?? "");
   const [organizerDescription, setOrganizerDescription] = useState(initialEvents[0]?.description ?? "");
   const [organizerStatus, setOrganizerStatus] = useState<EventStatus>(initialEvents[0]?.status ?? "draft");
   const [organizerGradingType, setOrganizerGradingType] = useState<GradingType>(initialEvents[0]?.gradingType ?? "rubric");
   const [organizerTrimExtremes, setOrganizerTrimExtremes] = useState(initialEvents[0]?.dropHighestAndLowestJudgeScores ?? false);
+  const [organizerHideRubricDescriptions, setOrganizerHideRubricDescriptions] = useState(initialEvents[0]?.hideRubricDescriptions ?? false);
   const [newParticipantName, setNewParticipantName] = useState("");
   const [newParticipantTitle, setNewParticipantTitle] = useState("");
   const [editingParticipantId, setEditingParticipantId] = useState("");
@@ -251,7 +253,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
   const activeEvent = events.find((event) => event.id === activeEventId) ?? events[0];
   const teacherQrLoginUrl = firebaseAvailable ? buildTeacherQrLoginUrl(activeEvent?.id ?? "", teacherQrName) : "";
   const participants = participantsByEvent[activeEvent?.id ?? ""] ?? [];
-  const selectedParticipant = participants.find((participant) => participant.id === selectedParticipantId) ?? participants[0];
+  const selectedParticipant = participants.find((participant) => participant.id === selectedParticipantId);
   const judgeId = authUser?.uid ?? "judge-1";
   const existingScorecard = activeEvent && selectedParticipant ? getJudgeScorecard(activeEvent.id, selectedParticipant.id, judgeId, scorecards) : undefined;
   const [draftScores, setDraftScores] = useState<Record<string, number>>(
@@ -575,6 +577,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
     setOrganizerStatus(event.status);
     setOrganizerGradingType(event.gradingType);
     setOrganizerTrimExtremes(event.dropHighestAndLowestJudgeScores ?? false);
+    setOrganizerHideRubricDescriptions(event.hideRubricDescriptions ?? false);
   };
 
   const clearAutoSaveTimer = () => {
@@ -629,7 +632,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
     const nextParticipants = participantsByEvent[activeEvent.id] ?? [];
     const nextParticipantId = nextParticipants.some((participant) => participant.id === selectedParticipantId)
       ? selectedParticipantId
-      : nextParticipants[0]?.id ?? "";
+      : "";
     setSelectedParticipantId(nextParticipantId);
     const scorecard = nextParticipantId ? getJudgeScorecard(activeEvent.id, nextParticipantId, judgeId, scorecards) : undefined;
     setDraftScores(scorecard?.scores ?? getDefaultScores(activeEvent.criteria));
@@ -651,8 +654,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
     setActiveEventId(eventId);
     if (nextEvent) {
       syncEventForm(nextEvent);
-      const nextParticipants = participantsByEvent[eventId] ?? [];
-      const nextParticipantId = nextParticipants[0]?.id ?? "";
+      const nextParticipantId = "";
       setSelectedParticipantId(nextParticipantId);
       if (nextParticipantId) {
         const scorecard = getJudgeScorecard(eventId, nextParticipantId, judgeId, scorecards);
@@ -677,6 +679,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
       status: organizerStatus,
       gradingType: organizerGradingType,
       dropHighestAndLowestJudgeScores: organizerTrimExtremes,
+      hideRubricDescriptions: organizerHideRubricDescriptions,
       criteria: activeEvent?.criteria.map((criterion) => ({ ...criterion })) ?? [createDefaultCriterion()]
     });
     optimisticEventsRef.current = [nextEvent, ...optimisticEventsRef.current.filter((event) => event.id !== nextEvent.id)];
@@ -918,6 +921,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
       status: organizerStatus,
       gradingType: organizerGradingType,
       dropHighestAndLowestJudgeScores: organizerTrimExtremes,
+      hideRubricDescriptions: organizerHideRubricDescriptions,
       updatedAt: new Date().toISOString()
     };
     setEvents((current) =>
@@ -1142,6 +1146,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                     const current = draftScores[criterion.id] ?? 0;
                     const max = criterion.maxPoints;
                     const isRubric = activeEvent.gradingType === "rubric";
+                    const showRubricDescriptions = isRubric && !activeEvent.hideRubricDescriptions;
                     const rubricLevels = createRubricLevels(max, criterion.rubricLevels);
                     const selectedRubricLevel = isRubric && current > 0 ? getRubricLevelForScore(max, current, criterion.rubricLevels) : undefined;
 
@@ -1154,7 +1159,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                           </div>
                           <span className="badge indigo">{criterion.maxPoints} pts</span>
                         </div>
-                        {isRubric ? (
+                        {showRubricDescriptions ? (
                           <div className="footer-note" style={{ marginTop: 10 }}>
                             {copy.chooseLetterHelp}
                           </div>
@@ -1175,7 +1180,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                             ))}
                           </div>
                         ) : null}
-                        {isRubric ? (
+                        {showRubricDescriptions ? (
                           <div className="footer-note" style={{ marginTop: 8 }}>
                             {selectedRubricLevel?.description ?? copy.selectLetterPrompt}
                           </div>
@@ -1555,6 +1560,20 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
                         aria-label={copy.trimExtremeScores}
                         checked={organizerTrimExtremes}
                         onChange={(event) => setOrganizerTrimExtremes(event.target.checked)}
+                      />
+                    </div>
+                  </div>
+                  <div className="criterion-card">
+                    <div className="criterion-top">
+                      <div>
+                        <strong>{copy.hideRubricDescriptions}</strong>
+                        <span>{copy.hideRubricDescriptionsDesc}</span>
+                      </div>
+                      <input
+                        type="checkbox"
+                        aria-label={copy.hideRubricDescriptions}
+                        checked={organizerHideRubricDescriptions}
+                        onChange={(event) => setOrganizerHideRubricDescriptions(event.target.checked)}
                       />
                     </div>
                   </div>
