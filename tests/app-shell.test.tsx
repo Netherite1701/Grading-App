@@ -79,6 +79,8 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("button", { name: "Team Helios" }));
     const saveButton = screen.getByRole("button", { name: "Save scorecard" });
     const firstGradeButton = screen.getByRole("button", { name: "Innovation grade A" });
+    expect(firstGradeButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getAllByText("Not set").length).toBeGreaterThan(0);
     expect(saveButton.compareDocumentPosition(firstGradeButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Innovation grade E" }));

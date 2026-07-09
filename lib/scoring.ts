@@ -14,7 +14,7 @@ export function clampScore(value: number, maxPoints: number) {
 }
 
 export function getDefaultScores(criteria: Criterion[]) {
-  return Object.fromEntries(criteria.map((criterion) => [criterion.id, Math.min(criterion.maxPoints, Math.ceil(criterion.maxPoints * 0.7))]));
+  return Object.fromEntries(criteria.map((criterion) => [criterion.id, 0]));
 }
 
 export function createRubricLevels(maxPoints: number, rubricLevels?: RubricLevel[]) {

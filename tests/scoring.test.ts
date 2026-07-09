@@ -45,10 +45,10 @@ describe("scoring helpers", () => {
   it("derives default scores and labels consistently", () => {
     const event = demoEvents[0];
     expect(getDefaultScores(event.criteria)).toEqual({
-      innovation: 4,
-      technical: 4,
-      design: 4,
-      viability: 4
+      innovation: 0,
+      technical: 0,
+      design: 0,
+      viability: 0
     });
     expect(criterionWeightLabel(event.criteria[0])).toBe("x3.0 max 5");
   });
