@@ -48,10 +48,19 @@ const developerTabs = [
   { id: "translations", labelKey: "translationsTab" }
 ] as const;
 
+const organizerTabs = [
+  { id: "setup", label: "Event setup" },
+  { id: "scores", label: "Judge scores" },
+  { id: "monitor", label: "Event monitor" }
+] as const;
+
 type SectionId = (typeof developerTabs)[number]["id"];
+type OrganizerTabId = (typeof organizerTabs)[number]["id"];
+type AppSurface = "console" | "judge";
 
 interface AppShellProps {
   initialUser?: User | null;
+  surface?: AppSurface;
 }
 
 function loadTranslationOverrides(): TranslationOverrides {
@@ -185,9 +194,11 @@ function canUseLocalDemoAccount() {
   return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 }
 
-export function AppShell({ initialUser }: AppShellProps) {
+export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
   const firebaseAvailable = isFirebaseConfigured();
+  const isJudgeSurface = surface === "judge";
   const demoDeveloper = demoUsers.find((user) => normalizeRole(user.role) === "developer") ?? null;
+  const demoJudge = demoUsers.find((user) => normalizeRole(user.role) === "judge") ?? null;
   const [language, setLanguage] = useState<AppLanguage>("ko");
   const [translationOverrides, setTranslationOverrides] = useState<TranslationOverrides>({});
   const [translationPublishMessage, setTranslationPublishMessage] = useState("");
@@ -221,6 +232,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [teacherQrName, setTeacherQrName] = useState("");
   const [teacherQrMessage, setTeacherQrMessage] = useState("");
   const [section, setSection] = useState<SectionId>(defaultSectionForRole(normalizeRole(authUser?.role)));
+  const [organizerTab, setOrganizerTab] = useState<OrganizerTabId>("setup");
   const [expandedCriterionId, setExpandedCriterionId] = useState<string | null>(initialEvents[0]?.criteria[0]?.id ?? null);
   const optimisticEventsRef = useRef<Event[]>([]);
   const teacherQrSignInStartedRef = useRef(false);
@@ -229,7 +241,7 @@ export function AppShell({ initialUser }: AppShellProps) {
   const isDeveloper = role === "developer";
   const canJudge = role === "judge" || isDeveloper;
   const canOrganize = role === "organizer" || isDeveloper;
-  const activeSection = isDeveloper ? section : defaultSectionForRole(role);
+  const activeSection = isJudgeSurface ? "judge" : isDeveloper ? section : defaultSectionForRole(role);
   const activeEvent = events.find((event) => event.id === activeEventId) ?? events[0];
   const teacherQrLoginUrl = firebaseAvailable ? buildTeacherQrLoginUrl(activeEvent?.id ?? "", teacherQrName) : "";
   const participants = participantsByEvent[activeEvent?.id ?? ""] ?? [];
@@ -252,8 +264,8 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (firebaseAvailable || initialUser !== undefined) return;
 
     if (canUseLocalDemoAccount()) {
-      setAuthUser(demoDeveloper);
-      setSection("developer");
+      setAuthUser(isJudgeSurface ? demoJudge : demoDeveloper);
+      setSection(isJudgeSurface ? "judge" : "developer");
       setAuthStatus(copy.demoMode);
       return;
     }
@@ -261,7 +273,7 @@ export function AppShell({ initialUser }: AppShellProps) {
     setAuthUser(null);
     setSection("standings");
     setAuthStatus(copy.signedOut);
-  }, [copy.demoMode, copy.signedOut, demoDeveloper, firebaseAvailable, initialUser]);
+  }, [copy.demoMode, copy.signedOut, demoDeveloper, demoJudge, firebaseAvailable, initialUser, isJudgeSurface]);
 
   useEffect(() => {
     if (typeof document !== "undefined") {
@@ -437,7 +449,37 @@ export function AppShell({ initialUser }: AppShellProps) {
     setSection(defaultSectionForRole(role));
   }, [role]);
 
-  const summary = activeEvent ? calculateTotals(activeEvent, draftScores) : undefined;
+  const eventScorecards = activeEvent ? scorecards.filter((card) => card.eventId === activeEvent.id) : [];
+  const judgeRoster = (() => {
+    const roster = new Map<string, { id: string; name: string; email: string }>();
+
+    users.forEach((user) => {
+      if (normalizeRole(user.role) !== "judge") return;
+      roster.set(user.uid, {
+        id: user.uid,
+        name: user.displayName ?? user.email,
+        email: user.email
+      });
+    });
+
+    eventScorecards.forEach((card) => {
+      if (roster.has(card.judgeId)) return;
+      roster.set(card.judgeId, {
+        id: card.judgeId,
+        name: card.judgeName,
+        email: card.judgeEmail
+      });
+    });
+
+    return [...roster.values()].sort((left, right) => left.name.localeCompare(right.name));
+  })();
+  const scorecardFor = (participantId: string, rosterJudgeId: string) =>
+    eventScorecards.find((card) => card.participantId === participantId && card.judgeId === rosterJudgeId);
+  const totalJudgeAssignments = participants.length * judgeRoster.length;
+  const completedJudgeAssignments = participants.reduce(
+    (sum, participant) => sum + judgeRoster.filter((judge) => scorecardFor(participant.id, judge.id)).length,
+    0
+  );
   const leaderboard = activeEvent
     ? participants
         .map((participant) => buildLeaderboardRow(activeEvent, participant, scorecards.filter((card) => card.eventId === activeEvent.id && card.participantId === participant.id)))
@@ -853,10 +895,409 @@ export function AppShell({ initialUser }: AppShellProps) {
       await signOutOfGoogle();
     }
     const useLocalDemo = !firebaseAvailable && canUseLocalDemoAccount();
-    setAuthUser(useLocalDemo ? demoDeveloper : null);
-    setSection(useLocalDemo ? "developer" : "standings");
+    setAuthUser(useLocalDemo ? (isJudgeSurface ? demoJudge : demoDeveloper) : null);
+    setSection(useLocalDemo ? (isJudgeSurface ? "judge" : "developer") : "standings");
     setAuthStatus(useLocalDemo ? copy.demoMode : copy.signedOut);
   };
+
+  const renderEventSelector = (variant: "sidebar" | "judge") => {
+    const selectId = `${variant}-event-select`;
+
+    return (
+      <div className={`panel ${variant === "judge" ? "judge-event-panel" : ""}`} role={variant === "judge" ? "region" : undefined} aria-label={variant === "judge" ? "Judge event selection" : undefined}>
+        <div className="panel-inner stack">
+          <div className="section-header">
+            <div>
+              <h2>{copy.currentEvent}</h2>
+              <p>{variant === "judge" ? "Choose the event after finishing the visible scorecard." : role === "guest" ? copy.currentEventGuestHelp : copy.currentEventHelp}</p>
+            </div>
+          </div>
+          <label className="label" htmlFor={selectId}>
+            {copy.currentEvent}
+          </label>
+          <select id={selectId} className="select" value={activeEventId} onChange={(event) => updateSelectedEvent(event.target.value)}>
+            {events.map((event) => (
+              <option key={event.id} value={event.id}>
+                {event.name}
+              </option>
+            ))}
+          </select>
+          <div className="footer-note">{activeEvent?.description}</div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderJudgeScoring = (dedicated = false) => {
+    if (!activeEvent) {
+      return (
+        <section className={`judge-workspace ${dedicated ? "judge-workspace-dedicated" : ""}`} aria-label="Judge scoring interface">
+          <div className="panel judge-scoring-panel">
+            <div className="panel-inner stack">
+              <h2>{copy.judgeWorkspace}</h2>
+              <div className="footer-note">{copy.noEventSelected}</div>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    if (!canJudge) {
+      return (
+        <section className={`judge-workspace ${dedicated ? "judge-workspace-dedicated" : ""}`} aria-label="Judge scoring interface">
+          <div className="panel judge-scoring-panel">
+            <div className="panel-inner stack">
+              <h2>{copy.judgeWorkspace}</h2>
+              <div className="footer-note">{authStatus}</div>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    const selectedStatus = existingScorecard ? "Saved" : "Not scored";
+
+    return (
+      <section className={`judge-workspace ${dedicated ? "judge-workspace-dedicated" : ""}`} aria-label="Judge scoring interface">
+        <div className="panel judge-scoring-panel">
+          <div className="panel-inner stack">
+            <div className="section-header judge-header">
+              <div>
+                <h2>{copy.judgeWorkspace}</h2>
+                <p>{selectedParticipant ? copy.judgeSelected(selectedParticipant.name) : "Select a team to start scoring."}</p>
+              </div>
+              {selectedParticipant ? <span className={`badge ${existingScorecard ? "emerald" : "amber"}`}>{selectedStatus}</span> : null}
+            </div>
+
+            <div className="judge-team-section">
+              <div className="section-header">
+                <div>
+                  <h3>{copy.chooseTeam}</h3>
+                  <p>Tap a large team card. Cards marked Saved already have your scorecard.</p>
+                </div>
+              </div>
+              {participants.length ? (
+                <div className="judge-team-grid">
+                  {participants.map((participant) => {
+                    const isSelected = participant.id === selectedParticipant?.id;
+                    const isSaved = Boolean(activeEvent ? getJudgeScorecard(activeEvent.id, participant.id, judgeId, scorecards) : undefined);
+
+                    return (
+                      <button
+                        key={participant.id}
+                        type="button"
+                        className={`team-card ${isSelected ? "active" : ""} ${isSaved ? "saved" : ""}`}
+                        aria-label={participant.name}
+                        aria-pressed={isSelected}
+                        onClick={() => selectParticipant(participant.id)}
+                      >
+                        <strong>{participant.name}</strong>
+                        <span>{participant.title ?? "Untitled project"}</span>
+                        <span className={`badge ${isSaved ? "emerald" : "amber"}`}>{isSaved ? "Saved" : "Not scored"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="criterion-card judge-criterion-card">
+                  <strong>No teams are available for this event yet.</strong>
+                </div>
+              )}
+            </div>
+
+            {selectedParticipant ? (
+              <>
+                <div className="criteria-list judge-criteria-list">
+                  {activeEvent.criteria.map((criterion) => {
+                    const current = draftScores[criterion.id] ?? 0;
+                    const max = criterion.maxPoints;
+                    const isRubric = activeEvent.gradingType === "rubric";
+                    const rubricLevels = createRubricLevels(max, criterion.rubricLevels);
+                    const selectedRubricLevel = isRubric && current > 0 ? getRubricLevelForScore(max, current, criterion.rubricLevels) : undefined;
+
+                    return (
+                      <div className="criterion-card judge-criterion-card" key={criterion.id}>
+                        <div className="criterion-top">
+                          <div>
+                            <strong>{criterion.name}</strong>
+                            <span>{criterion.description}</span>
+                          </div>
+                          <span className="badge indigo">{criterion.maxPoints} pts</span>
+                        </div>
+                        {isRubric ? (
+                          <div className="footer-note" style={{ marginTop: 10 }}>
+                            {copy.chooseLetterHelp}
+                          </div>
+                        ) : null}
+                        {isRubric ? (
+                          <div className="chip-row judge-grade-row" style={{ marginTop: 12 }}>
+                            {rubricLevels.map((level) => (
+                              <button
+                                key={`${criterion.id}-${level.label}`}
+                                type="button"
+                                aria-label={`${criterion.name} grade ${level.label}`}
+                                aria-pressed={selectedRubricLevel?.label === level.label}
+                                className={`chip judge-grade-button ${selectedRubricLevel?.label === level.label ? "active" : ""}`}
+                                onClick={() =>
+                                  setDraftScores((value) => ({
+                                    ...value,
+                                    [criterion.id]: clampScore(level.points, max)
+                                  }))
+                                }
+                              >
+                                {level.label}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        {isRubric ? (
+                          <div className="footer-note" style={{ marginTop: 8 }}>
+                            {selectedRubricLevel?.description ?? copy.selectLetterPrompt}
+                          </div>
+                        ) : null}
+                        <div className="range-row judge-range-row">
+                          {isRubric ? (
+                            <div className="field selected-grade-field" aria-live="polite">
+                              <span>{copy.selectedGrade}</span>
+                              <strong>{selectedRubricLevel?.label ?? "Not set"}</strong>
+                            </div>
+                          ) : (
+                            <>
+                              <input
+                                className="range judge-range"
+                                type="range"
+                                min={0}
+                                max={max}
+                                step={0.5}
+                                value={current}
+                                onChange={(event) =>
+                                  setDraftScores((value) => ({
+                                    ...value,
+                                    [criterion.id]: clampScore(Number(event.target.value), max)
+                                  }))
+                                }
+                              />
+                              <input
+                                className="field judge-score-input"
+                                type="number"
+                                min={0}
+                                max={max}
+                                step={0.5}
+                                value={current}
+                                onChange={(event) =>
+                                  setDraftScores((value) => ({
+                                    ...value,
+                                    [criterion.id]: clampScore(Number(event.target.value), max)
+                                  }))
+                                }
+                              />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div>
+                  <label className="label judge-label" htmlFor="judge-notes">
+                    {copy.feedbackNotes}
+                  </label>
+                  <textarea id="judge-notes" className="textarea judge-notes" maxLength={2000} value={notes} onChange={(event) => setNotes(event.target.value)} />
+                  <div className="footer-note">{notes.length}/2000 characters</div>
+                </div>
+                <div className="button-row judge-actions">
+                  <button className="button judge-action" onClick={saveJudgeScorecard}>
+                    {copy.saveScorecard}
+                  </button>
+                  <button className="button secondary judge-action" onClick={() => setDraftScores(getDefaultScores(activeEvent.criteria))}>
+                    {copy.resetScores}
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderOrganizerTabs = () => (
+    <div className="panel organizer-tabs-panel">
+      <div className="panel-inner">
+        <div className="organizer-tabs" role="tablist" aria-label="Organizer screens">
+          {organizerTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`organizer-tab ${organizerTab === tab.id ? "active" : ""}`}
+              role="tab"
+              aria-selected={organizerTab === tab.id}
+              onClick={() => setOrganizerTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderJudgeScoreReview = () => {
+    if (!activeEvent) return null;
+
+    return (
+      <div className="panel">
+        <div className="panel-inner stack">
+          <div className="section-header">
+            <div>
+              <h2>Judge scores</h2>
+              <p>Every saved judge score is visible in one table, with missing scorecards marked clearly.</p>
+            </div>
+          </div>
+          {judgeRoster.length ? (
+            <div className="score-review-scroll">
+              <table className="table score-review-table">
+                <thead>
+                  <tr>
+                    <th>{copy.team}</th>
+                    {judgeRoster.map((judge) => (
+                      <th key={judge.id}>{judge.name}</th>
+                    ))}
+                    <th>{copy.averagePercent}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {participants.map((participant) => {
+                    const participantCards = eventScorecards.filter((card) => card.participantId === participant.id);
+                    const row = buildLeaderboardRow(activeEvent, participant, participantCards);
+
+                    return (
+                      <tr key={participant.id}>
+                        <td>
+                          <strong>{participant.name}</strong>
+                          <div className="footer-note">{participant.title}</div>
+                        </td>
+                        {judgeRoster.map((judge) => {
+                          const card = scorecardFor(participant.id, judge.id);
+                          const totals = card ? calculateTotals(activeEvent, card.scores) : null;
+
+                          return (
+                            <td key={judge.id}>
+                              {totals ? (
+                                <div className={`score-cell ${scoreBadge(totals.averageScore)}`}>
+                                  <strong>{totals.averageScore.toFixed(1)}%</strong>
+                                  <span>{totals.rawScore.toFixed(1)} raw</span>
+                                </div>
+                              ) : (
+                                <span className="badge amber">Missing</span>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td>
+                          {row.scorecardCount ? (
+                            <strong>{row.averageScore.toFixed(1)}%</strong>
+                          ) : (
+                            <span className="footer-note">No scores</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="criterion-card">No judges have been assigned or submitted scores yet.</div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderEventMonitor = () => {
+    if (!activeEvent) return null;
+    const completionPercent = totalJudgeAssignments === 0 ? 0 : Math.round((completedJudgeAssignments / totalJudgeAssignments) * 100);
+    const missingAssignments = Math.max(0, totalJudgeAssignments - completedJudgeAssignments);
+
+    return (
+      <div className="panel">
+        <div className="panel-inner stack">
+          <div className="section-header">
+            <div>
+              <h2>Event monitor</h2>
+              <p>Track who has submitted each scorecard and which teams still need judge attention.</p>
+            </div>
+          </div>
+          <div className="grid-3">
+            <div className="metric">
+              <span>Event completion</span>
+              <strong>{completionPercent}%</strong>
+            </div>
+            <div className="metric">
+              <span>Submitted</span>
+              <strong>{completedJudgeAssignments}</strong>
+            </div>
+            <div className="metric">
+              <span>Missing</span>
+              <strong>{missingAssignments}</strong>
+            </div>
+          </div>
+          {judgeRoster.length ? (
+            <div className="event-flow-board">
+              {participants.map((participant) => {
+                const completedForTeam = judgeRoster.filter((judge) => scorecardFor(participant.id, judge.id)).length;
+                const state =
+                  completedForTeam === 0
+                    ? "Waiting"
+                    : completedForTeam === judgeRoster.length
+                      ? "Completed"
+                      : "In progress";
+                const stateClass = state === "Completed" ? "done" : state === "In progress" ? "active" : "waiting";
+
+                return (
+                  <div className="flow-row" key={participant.id}>
+                    <div className="flow-node flow-team">
+                      <strong>{participant.name}</strong>
+                      <span>{participant.title ?? "Untitled project"}</span>
+                    </div>
+                    <div className="flow-judge-list">
+                      {judgeRoster.map((judge) => {
+                        const isSubmitted = Boolean(scorecardFor(participant.id, judge.id));
+                        return (
+                          <span key={judge.id} className={`flow-judge ${isSubmitted ? "done" : "missing"}`}>
+                            <strong>{judge.name}</strong>
+                            <span>{isSubmitted ? "Submitted" : "Missing"}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className={`flow-node flow-state ${stateClass}`}>
+                      <strong>{state}</strong>
+                      <span>
+                        {completedForTeam}/{judgeRoster.length} judges
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="criterion-card">No judge roster is available for this event yet.</div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  if (isJudgeSurface) {
+    return (
+      <main className="app-shell judge-shell">
+        {renderJudgeScoring(true)}
+        {renderEventSelector("judge")}
+      </main>
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -944,7 +1385,16 @@ export function AppShell({ initialUser }: AppShellProps) {
                 </div>
                 <div className="nav-list">
                   {developerTabs.map((item) => (
-                    <button key={item.id} className={`nav-button ${activeSection === item.id ? "active" : ""}`} onClick={() => setSection(item.id)}>
+                    <button
+                      key={item.id}
+                      className={`nav-button ${activeSection === item.id ? "active" : ""}`}
+                      onClick={() => {
+                        if (item.id === "organizer") {
+                          setOrganizerTab("setup");
+                        }
+                        setSection(item.id);
+                      }}
+                    >
                       {copy[item.labelKey]}
                     </button>
                   ))}
@@ -953,208 +1403,16 @@ export function AppShell({ initialUser }: AppShellProps) {
             </div>
           ) : null}
 
-          <div className="panel">
-            <div className="panel-inner stack">
-                <div className="section-header">
-                  <div>
-                    <h2>{copy.currentEvent}</h2>
-                    <p>{role === "guest" ? copy.currentEventGuestHelp : copy.currentEventHelp}</p>
-                  </div>
-                </div>
-              <select className="select" value={activeEventId} onChange={(event) => updateSelectedEvent(event.target.value)}>
-                {events.map((event) => (
-                  <option key={event.id} value={event.id}>
-                    {event.name}
-                  </option>
-                ))}
-              </select>
-              <div className="footer-note">{activeEvent?.description}</div>
-            </div>
-          </div>
+          {renderEventSelector("sidebar")}
         </aside>
 
         <div className="section-stack">
-          {activeSection === "judge" && activeEvent && selectedParticipant && canJudge ? (
-            <div className="grid-2">
-              <div className="panel">
-                <div className="panel-inner stack">
-                  <div className="section-header">
-                    <div>
-                      <h2>{copy.judgeWorkspace}</h2>
-                      <p>{copy.judgeSelected(selectedParticipant.name)}</p>
-                    </div>
-                    <span className="score-pill">{summary?.averageScore.toFixed(1) ?? "0.0"}%</span>
-                  </div>
-                  <div>
-                    <label className="label" htmlFor="judge-team-select">
-                      {copy.chooseTeam}
-                    </label>
-                    <select
-                      id="judge-team-select"
-                      className="select"
-                      value={selectedParticipant.id}
-                      onChange={(event) => selectParticipant(event.target.value)}
-                    >
-                      {participants.map((participant) => (
-                        <option key={participant.id} value={participant.id}>
-                          {participant.name}
-                          {participant.title ? ` - ${participant.title}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="footer-note" style={{ marginTop: 8 }}>
-                      {copy.tabletHelp}
-                    </div>
-                  </div>
-                  <div className="chip-row">
-                    {participants.map((participant) => (
-                      <button
-                        key={participant.id}
-                        className={`chip ${participant.id === selectedParticipant.id ? "active" : ""}`}
-                        onClick={() => selectParticipant(participant.id)}
-                      >
-                        {participant.name}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="criteria-list">
-                    {activeEvent.criteria.map((criterion) => {
-                      const current = draftScores[criterion.id] ?? 0;
-                      const max = criterion.maxPoints;
-                      const isRubric = activeEvent.gradingType === "rubric";
-                      const rubricLevels = createRubricLevels(max, criterion.rubricLevels);
-                      const selectedRubricLevel = isRubric && current > 0 ? getRubricLevelForScore(max, current, criterion.rubricLevels) : undefined;
-
-                      return (
-                        <div className="criterion-card" key={criterion.id}>
-                          <div className="criterion-top">
-                            <div>
-                              <strong>{criterion.name}</strong>
-                              <span>{criterion.description}</span>
-                            </div>
-                            <span className="badge indigo">{criterion.maxPoints} pts</span>
-                          </div>
-                          {isRubric ? (
-                            <div className="footer-note" style={{ marginTop: 10 }}>
-                              {copy.chooseLetterHelp}
-                            </div>
-                          ) : null}
-                          {isRubric ? (
-                            <div className="chip-row" style={{ marginTop: 12 }}>
-                              {rubricLevels.map((level) => (
-                                <button
-                                  key={`${criterion.id}-${level.label}`}
-                                  type="button"
-                                  aria-label={`${criterion.name} grade ${level.label}`}
-                                  aria-pressed={selectedRubricLevel?.label === level.label}
-                                  className={`chip ${selectedRubricLevel?.label === level.label ? "active" : ""}`}
-                                  onClick={() =>
-                                    setDraftScores((value) => ({
-                                      ...value,
-                                      [criterion.id]: clampScore(level.points, max)
-                                    }))
-                                  }
-                                >
-                                  {level.label}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                          {isRubric ? (
-                            <div className="footer-note" style={{ marginTop: 8 }}>
-                              {selectedRubricLevel?.description ?? copy.selectLetterPrompt}
-                            </div>
-                          ) : null}
-                          <div className="range-row">
-                            {isRubric ? (
-                              <div className="field" aria-live="polite" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <span>{copy.selectedGrade}</span>
-                                <strong>{selectedRubricLevel?.label ?? "Not set"}</strong>
-                              </div>
-                            ) : (
-                              <>
-                                <input
-                                  className="range"
-                                  type="range"
-                                  min={0}
-                                  max={max}
-                                  step={0.5}
-                                  value={current}
-                                  onChange={(event) =>
-                                    setDraftScores((value) => ({
-                                      ...value,
-                                      [criterion.id]: clampScore(Number(event.target.value), max)
-                                    }))
-                                  }
-                                />
-                                <input
-                                  className="field"
-                                  type="number"
-                                  min={0}
-                                  max={max}
-                                  step={0.5}
-                                  value={current}
-                                  onChange={(event) =>
-                                    setDraftScores((value) => ({
-                                      ...value,
-                                      [criterion.id]: clampScore(Number(event.target.value), max)
-                                    }))
-                                  }
-                                />
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div>
-                    <label className="label" htmlFor="judge-notes">
-                      {copy.feedbackNotes}
-                    </label>
-                    <textarea id="judge-notes" className="textarea" maxLength={2000} value={notes} onChange={(event) => setNotes(event.target.value)} />
-                    <div className="footer-note">{notes.length}/2000 characters</div>
-                  </div>
-                  <div className="button-row">
-                    <button className="button" onClick={saveJudgeScorecard}>
-                      {copy.saveScorecard}
-                    </button>
-                    <button className="button secondary" onClick={() => setDraftScores(getDefaultScores(activeEvent.criteria))}>
-                      {copy.resetScores}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="panel">
-                <div className="panel-inner stack">
-                  <div className="section-header">
-                    <div>
-                      <h2>{copy.scoreBreakdown}</h2>
-                      <p>{copy.scoreBreakdownDesc}</p>
-                    </div>
-                  </div>
-                  <div className="grid-3">
-                    <div className="metric">
-                      <span>{copy.currentWeightedScore}</span>
-                      <strong>{summary?.rawScore.toFixed(1) ?? "0.0"}</strong>
-                    </div>
-                    <div className="metric">
-                      <span>{copy.completion}</span>
-                      <strong>{summary?.completion.toFixed(0) ?? "0"}%</strong>
-                    </div>
-                    <div className="metric">
-                      <span>{copy.maximumWeightedScorePanel}</span>
-                      <strong>{summary?.maxScore.toFixed(1) ?? "0.0"}</strong>
-                    </div>
-                  </div>
-                  <div className="footer-note">{copy.completionHelp}</div>
-                </div>
-              </div>
-            </div>
-          ) : null}
+          {activeSection === "judge" && activeEvent && canJudge ? renderJudgeScoring(false) : null}
 
           {activeSection === "organizer" && activeEvent && canOrganize ? (
+            <div className="section-stack">
+              {renderOrganizerTabs()}
+              {organizerTab === "setup" ? (
             <div className="grid-2">
               <div className="panel">
                 <div className="panel-inner stack">
@@ -1550,6 +1808,10 @@ export function AppShell({ initialUser }: AppShellProps) {
                 </div>
               </div>
             </div>
+              ) : null}
+              {organizerTab === "scores" ? renderJudgeScoreReview() : null}
+              {organizerTab === "monitor" ? renderEventMonitor() : null}
+            </div>
           ) : null}
 
           {activeSection === "standings" && activeEvent ? (
@@ -1676,7 +1938,10 @@ export function AppShell({ initialUser }: AppShellProps) {
                       <p>{copy.eventManagementDesc}</p>
                     </div>
                   </div>
-                  <button className="button" onClick={() => setSection("organizer")}>
+                  <button className="button" onClick={() => {
+                    setOrganizerTab("setup");
+                    setSection("organizer");
+                  }}>
                     {copy.openEventBuilder}
                   </button>
                 </div>

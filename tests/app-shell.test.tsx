@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import React from "react";
 import { renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import JudgePage from "@/app/judge/page";
 import { AppShell } from "@/components/app-shell";
 import { getBaseAppCopy, getRoleLabel } from "@/lib/i18n";
 import type { User } from "@/lib/types";
@@ -52,8 +53,9 @@ describe("AppShell", () => {
     await renderEnglishShell(<AppShell initialUser={judgeUser} />);
 
     expect(screen.getByRole("heading", { name: "Judge workspace" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Score breakdown" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Choose team")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Choose team" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Score breakdown" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Choose team" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Organizer View" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign in with Google" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
@@ -61,12 +63,29 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("button", { name: "Team Helios" }));
     await user.click(screen.getByRole("button", { name: "Innovation grade E" }));
 
-    expect(screen.getByText("39.0")).toBeInTheDocument();
+    expect(screen.getByText("Team Helios is selected for scoring.")).toBeInTheDocument();
 
     const notes = screen.getByLabelText("Feedback notes");
     await user.clear(notes);
     await user.type(notes, "Needs a sharper opening and stronger demo pacing.");
     await user.click(screen.getByRole("button", { name: "Save scorecard" }));
+  });
+
+  it("renders the dedicated judge route as a stripped tablet scoring screen", async () => {
+    await renderEnglishShell(<JudgePage />);
+
+    const scoring = await screen.findByRole("region", { name: "Judge scoring interface" });
+    const eventSelection = screen.getByRole("region", { name: "Judge event selection" });
+
+    expect(scoring.compareDocumentPosition(eventSelection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Team Solstice" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Team Helios" })).toBeInTheDocument();
+    expect(screen.getAllByText("Saved").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Not scored").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("heading", { name: "Score breakdown" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Organizer View" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Developer tools" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
   });
 
   it("routes an organizer to the event builder and clarifies scoring setup", async () => {
@@ -113,6 +132,35 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("button", { name: "Save event" }));
 
     expect(eventName).toHaveValue("LaunchPad Demo Night Updated");
+  });
+
+  it("shows organizer judge score review with every judge score and missing scorecard visible", async () => {
+    const user = userEvent.setup();
+    await renderEnglishShell(<AppShell initialUser={organizerUser} />);
+
+    await user.click(screen.getByRole("tab", { name: "Judge scores" }));
+
+    expect(screen.getByRole("heading", { name: "Judge scores" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Avery Chen" })).toBeInTheDocument();
+    expect(screen.getByText("Team Solstice")).toBeInTheDocument();
+    expect(screen.getByText("Team Helios")).toBeInTheDocument();
+    expect(screen.getAllByText("80.0%").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Missing").length).toBeGreaterThan(0);
+  });
+
+  it("shows organizer live event monitoring as a judge/team completion flow", async () => {
+    const user = userEvent.setup();
+    await renderEnglishShell(<AppShell initialUser={organizerUser} />);
+
+    await user.click(screen.getByRole("tab", { name: "Event monitor" }));
+
+    expect(screen.getByRole("heading", { name: "Event monitor" })).toBeInTheDocument();
+    expect(screen.getByText("Event completion")).toBeInTheDocument();
+    expect(screen.getByText("Team Solstice")).toBeInTheDocument();
+    expect(screen.getByText("Team Helios")).toBeInTheDocument();
+    expect(screen.getAllByText("Submitted").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Missing").length).toBeGreaterThan(0);
+    expect(screen.getByText("Waiting")).toBeInTheDocument();
   });
 
   it("keeps organizer event draft inputs intact while criteria are edited before creation", async () => {

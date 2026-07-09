@@ -512,6 +512,291 @@ button {
   line-height: 1.5;
 }
 
+.judge-shell {
+  max-width: 1180px;
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+}
+
+.judge-workspace {
+  width: 100%;
+}
+
+.judge-workspace-dedicated .panel-inner {
+  padding: 34px;
+}
+
+.judge-scoring-panel .section-header h2 {
+  font-size: 2rem;
+}
+
+.judge-header p,
+.judge-team-section p {
+  font-size: 1.08rem;
+}
+
+.judge-team-section h3 {
+  margin: 0;
+  font-size: 1.45rem;
+}
+
+.judge-team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.team-card {
+  min-height: 132px;
+  display: grid;
+  align-content: space-between;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(8, 13, 23, 0.66);
+  color: var(--text);
+  text-align: left;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.team-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(124, 147, 255, 0.38);
+}
+
+.team-card.active {
+  border-color: rgba(124, 147, 255, 0.72);
+  background: rgba(124, 147, 255, 0.18);
+}
+
+.team-card.saved {
+  box-shadow: inset 4px 0 0 rgba(52, 211, 153, 0.84);
+}
+
+.team-card strong {
+  font-size: 1.28rem;
+}
+
+.team-card span {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.team-card .badge {
+  justify-self: start;
+}
+
+.judge-criteria-list {
+  gap: 16px;
+}
+
+.judge-criterion-card {
+  padding: 20px;
+}
+
+.judge-workspace-dedicated .criterion-top strong {
+  font-size: 1.35rem;
+}
+
+.judge-workspace-dedicated .criterion-top span {
+  font-size: 1rem;
+}
+
+.judge-grade-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(72px, 1fr));
+}
+
+.judge-grade-button {
+  min-height: 72px;
+  justify-content: center;
+  align-items: center;
+  border-radius: 16px;
+  font-size: 2rem;
+  font-weight: 900;
+}
+
+.judge-range-row {
+  grid-template-columns: minmax(0, 1fr) 132px;
+}
+
+.selected-grade-field {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 1.16rem;
+}
+
+.selected-grade-field strong {
+  font-size: 1.8rem;
+}
+
+.judge-range {
+  min-height: 42px;
+}
+
+.judge-score-input {
+  min-height: 64px;
+  font-size: 1.35rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.judge-label {
+  font-size: 1.08rem;
+}
+
+.judge-notes {
+  min-height: 160px;
+  font-size: 1.16rem;
+}
+
+.judge-actions {
+  gap: 14px;
+}
+
+.judge-action {
+  min-height: 64px;
+  min-width: 180px;
+  font-size: 1.2rem;
+}
+
+.judge-event-panel .select {
+  min-height: 58px;
+  font-size: 1.12rem;
+}
+
+.organizer-tabs-panel .panel-inner {
+  padding: 12px;
+}
+
+.organizer-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.organizer-tab {
+  min-height: 48px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(8, 13, 23, 0.52);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.organizer-tab.active {
+  border-color: rgba(124, 147, 255, 0.56);
+  background: rgba(124, 147, 255, 0.18);
+}
+
+.score-review-scroll {
+  overflow-x: auto;
+}
+
+.score-review-table {
+  min-width: 820px;
+}
+
+.score-review-table th,
+.score-review-table td {
+  vertical-align: top;
+}
+
+.score-cell {
+  display: inline-grid;
+  gap: 4px;
+  min-width: 92px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.score-cell strong {
+  font-size: 1.05rem;
+}
+
+.score-cell span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.score-cell.emerald {
+  border-color: rgba(52, 211, 153, 0.36);
+}
+
+.score-cell.indigo {
+  border-color: rgba(124, 147, 255, 0.42);
+}
+
+.score-cell.amber {
+  border-color: rgba(251, 191, 36, 0.38);
+}
+
+.score-cell.rose {
+  border-color: rgba(251, 113, 133, 0.4);
+}
+
+.event-flow-board {
+  display: grid;
+  gap: 14px;
+}
+
+.flow-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.9fr) minmax(320px, 2fr) minmax(160px, 0.7fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.flow-node,
+.flow-judge {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(8, 13, 23, 0.56);
+}
+
+.flow-node span,
+.flow-judge span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.flow-judge-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.flow-judge.done {
+  border-color: rgba(52, 211, 153, 0.36);
+}
+
+.flow-judge.missing {
+  border-color: rgba(251, 191, 36, 0.34);
+}
+
+.flow-state.done {
+  border-color: rgba(52, 211, 153, 0.42);
+}
+
+.flow-state.active {
+  border-color: rgba(124, 147, 255, 0.44);
+}
+
+.flow-state.waiting {
+  border-color: rgba(251, 191, 36, 0.34);
+}
+
 @media (max-width: 1120px) {
   .hero {
     grid-template-columns: 1fr;
@@ -549,5 +834,27 @@ button {
   .criterion-toggle {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .judge-workspace-dedicated .panel-inner {
+    padding: 22px;
+  }
+
+  .flow-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .judge-grade-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .judge-range-row {
+    grid-template-columns: 1fr;
+  }
+
+  .judge-action {
+    width: 100%;
   }
 }
