@@ -60,6 +60,22 @@ function isAnonymousFirebaseUser(firebaseUser: Pick<FirebaseUser, "isAnonymous">
   return firebaseUser.isAnonymous === true;
 }
 
+function withoutUndefinedFields<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== undefined).map((item) => withoutUndefinedFields(item)) as T;
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, withoutUndefinedFields(item)])
+    ) as T;
+  }
+
+  return value;
+}
+
 export function isFirebaseConfigured() {
   return Boolean(firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId && firebaseConfig.appId);
 }
@@ -165,7 +181,7 @@ export async function initializeFirebaseAppCheck() {
   appCheckPromise = (async () => {
     const siteKey = getAppCheckSiteKey();
     if (!siteKey) {
-      throw createFirebaseError("app-check/missing-site-key", "NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY is required.");
+      return;
     }
 
     const [{ ReCaptchaEnterpriseProvider, initializeAppCheck }, firebaseApp] = await Promise.all([
@@ -318,12 +334,12 @@ export async function subscribeToFirebaseAppData(onData: (data: FirebaseAppData)
 
 export async function saveFirebaseEvent(event: Event) {
   const { doc, setDoc } = await import("firebase/firestore");
-  return setDoc(doc(await getFirebaseDb(), "events", event.id), event, { merge: true });
+  return setDoc(doc(await getFirebaseDb(), "events", event.id), withoutUndefinedFields(event), { merge: true });
 }
 
 export async function saveFirebaseParticipant(eventId: string, participant: Participant) {
   const { doc, setDoc } = await import("firebase/firestore");
-  return setDoc(doc(await getFirebaseDb(), "participants", participant.id), { ...participant, eventId }, { merge: true });
+  return setDoc(doc(await getFirebaseDb(), "participants", participant.id), withoutUndefinedFields({ ...participant, eventId }), { merge: true });
 }
 
 export async function deleteFirebaseParticipant(participantId: string) {
@@ -333,7 +349,7 @@ export async function deleteFirebaseParticipant(participantId: string) {
 
 export async function saveFirebaseScorecard(scorecard: Scorecard) {
   const { doc, setDoc } = await import("firebase/firestore");
-  return setDoc(doc(await getFirebaseDb(), "scorecards", scorecard.id), scorecard, { merge: true });
+  return setDoc(doc(await getFirebaseDb(), "scorecards", scorecard.id), withoutUndefinedFields(scorecard), { merge: true });
 }
 
 export async function updateFirebaseUserRole(uid: string, role: Role) {
@@ -370,12 +386,12 @@ export async function upsertAuthenticatedUser(firebaseUser: FirebaseUserProfile)
       createdAt: data.createdAt ?? now,
       updatedAt: now
     };
-    await setDoc(userRef, user, { merge: true });
+    await setDoc(userRef, withoutUndefinedFields(user), { merge: true });
     return user;
   }
 
   const user: User = createNewUserRecord(firebaseUser);
-  await setDoc(userRef, user, { merge: true });
+  await setDoc(userRef, withoutUndefinedFields(user), { merge: true });
   return user;
 }
 
@@ -406,6 +422,6 @@ export async function upsertTeacherQrUser(firebaseUser: FirebaseUserProfile, pro
         updatedAt: now
       };
 
-  await setDoc(userRef, user, { merge: true });
+  await setDoc(userRef, withoutUndefinedFields(user), { merge: true });
   return user;
 }

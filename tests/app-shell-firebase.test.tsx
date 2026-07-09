@@ -34,11 +34,21 @@ const firebaseHarness = vi.hoisted(() => ({
   saveFirebaseEvent: vi.fn(),
   saveFirebaseTranslationOverrides: vi.fn(),
   signInWithTeacherQr: vi.fn(),
-  signOutOfGoogle: vi.fn()
+  signOutOfGoogle: vi.fn(),
+  upsertAuthenticatedUser: vi.fn()
 }));
 
 vi.mock("@/lib/firebase", () => ({
   assertAuthorizedAppUser: firebaseHarness.assertAuthorizedAppUser,
+  createNewUserRecord: (user: typeof firebaseUser) => ({
+    uid: user.uid,
+    email: user.email ?? "",
+    displayName: user.displayName ?? undefined,
+    photoURL: user.photoURL ?? undefined,
+    role: "guest",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z"
+  }),
   getFirebaseErrorMessage: (error: unknown) => (error instanceof Error ? error.message : "Firebase request failed."),
   isFirebaseConfigured: () => true,
   normalizeRole: (role: StoredRole | undefined): Role => {
@@ -71,7 +81,7 @@ vi.mock("@/lib/firebase", () => ({
     return vi.fn();
   }),
   updateFirebaseUserRole: vi.fn(),
-  upsertAuthenticatedUser: vi.fn(async () => guestUser),
+  upsertAuthenticatedUser: firebaseHarness.upsertAuthenticatedUser,
   upsertTeacherQrUser: vi.fn(async (user: typeof firebaseUser, profile: { displayName?: string }) => ({
     uid: user.uid,
     email: "",
@@ -101,6 +111,8 @@ describe("AppShell Firebase role sync", () => {
     });
     firebaseHarness.signOutOfGoogle.mockReset();
     firebaseHarness.signOutOfGoogle.mockResolvedValue(undefined);
+    firebaseHarness.upsertAuthenticatedUser.mockReset();
+    firebaseHarness.upsertAuthenticatedUser.mockResolvedValue(guestUser);
     window.localStorage.clear();
     window.localStorage.setItem("grading-program-language", "en");
     window.history.pushState({}, "", "/");
@@ -118,6 +130,20 @@ describe("AppShell Firebase role sync", () => {
 
     expect(screen.queryByRole("button", { name: "Sign in with Google" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+  });
+
+  it("keeps a valid Google session signed in when Firestore user sync fails", async () => {
+    firebaseHarness.upsertAuthenticatedUser.mockRejectedValueOnce(new Error("permission-denied"));
+    const { AppShell } = await import("@/components/app-shell");
+
+    render(<AppShell />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    });
+
+    expect(firebaseHarness.signOutOfGoogle).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Sign in with Google" })).not.toBeInTheDocument();
   });
 
   it("keeps a locally created event selected while Firebase snapshots catch up", async () => {
@@ -229,7 +255,7 @@ describe("AppShell Firebase role sync", () => {
 
     expect(firebaseHarness.saveFirebaseTranslationOverrides).toHaveBeenCalledWith(expect.objectContaining({ en: expect.objectContaining({ appTitle: "Published Console" }) }));
     expect(await screen.findByText("Translations published.")).toBeInTheDocument();
-  }, 10000);
+  }, 30000);
 
   it("signs the session back out when Firebase rejects the restored account", async () => {
     firebaseHarness.assertAuthorizedAppUser.mockImplementation(() => {

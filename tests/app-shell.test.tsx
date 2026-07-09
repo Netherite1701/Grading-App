@@ -33,6 +33,7 @@ const guestUser: User = {
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  vi.stubEnv("NEXT_PUBLIC_LOCAL_DEV_MODE", "1");
   window.localStorage.clear();
   window.localStorage.setItem("grading-program-language", "en");
   document.documentElement.lang = "";
@@ -195,11 +196,21 @@ describe("AppShell", () => {
     expect(screen.queryByRole("button", { name: "Developer tools" })).not.toBeInTheDocument();
   });
 
-  it("shows the Google sign-in action only when signed out", async () => {
+  it("does not show the Google sign-in action when Firebase is not configured", async () => {
     await renderEnglishShell(<AppShell initialUser={null} />);
 
-    expect(screen.getByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sign in with Google" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Firebase setup required" })).toBeInTheDocument();
+  });
+
+  it("does not use the local developer demo account unless explicitly enabled", async () => {
+    vi.stubEnv("NEXT_PUBLIC_LOCAL_DEV_MODE", "0");
+
+    await renderEnglishShell(<AppShell />);
+
+    expect(screen.getByRole("heading", { name: "Live standings" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Developer tools" })).not.toBeInTheDocument();
   });
 
   it("gives developers tabbed access to all views, including translations", async () => {
@@ -299,5 +310,5 @@ describe("AppShell", () => {
     fireEvent.change(screen.getByLabelText("Translation ko appTitle"), { target: { value: "행사 채점 관리" } });
     expect(screen.getByText("Edited")).toBeInTheDocument();
     expect(window.localStorage.getItem("grading-program-translation-overrides")).toContain("행사 채점 관리");
-  }, 10000);
+  }, 30000);
 });

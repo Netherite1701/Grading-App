@@ -2,3 +2,7 @@ node_modules
 .next
 .env.local
 *.tsbuildinfo
+.pnpm-store
+pnpm-lock.yaml
+pnpm-workspace.yaml
+next-dev*.log

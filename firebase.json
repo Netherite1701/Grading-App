@@ -9,6 +9,10 @@
     "ignore": [
       "node_modules",
       ".git",
+      ".pnpm-store",
+      "pnpm-lock.yaml",
+      "pnpm-workspace.yaml",
+      "next-dev*.log",
       "firebase-debug.log",
       "firebase-debug.*.log",
       "functions"

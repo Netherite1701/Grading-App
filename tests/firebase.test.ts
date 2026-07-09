@@ -171,6 +171,53 @@ describe("Firebase helpers", () => {
     expect(setDocMock).toHaveBeenCalledWith(mockUserRef, expect.objectContaining({ role: "guest", uid: "user-2" }), { merge: true });
   });
 
+  it("omits undefined optional user fields before writing to Firestore", async () => {
+    getDocMock.mockResolvedValue({
+      exists: () => false
+    });
+
+    await firebase.upsertAuthenticatedUser({
+      uid: "user-without-photo",
+      email: "guest@example.com",
+      displayName: null,
+      photoURL: null
+    });
+
+    const writtenUser = setDocMock.mock.calls[0][1];
+    expect(writtenUser).not.toHaveProperty("displayName");
+    expect(writtenUser).not.toHaveProperty("photoURL");
+    expect(writtenUser).toEqual(expect.objectContaining({ email: "guest@example.com", role: "guest" }));
+  });
+
+  it("omits nested undefined fields from Firestore writes", async () => {
+    const event = {
+      id: "event-with-undefined",
+      name: "Backend Test",
+      description: undefined,
+      status: "draft" as const,
+      gradingType: "rubric" as const,
+      ownerId: "organizer-1",
+      ownerEmail: "organizer@example.com",
+      criteria: [
+        {
+          id: "criterion-1",
+          name: "Impact",
+          description: undefined,
+          maxPoints: 5,
+          weight: 1
+        }
+      ],
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z"
+    };
+
+    await firebase.saveFirebaseEvent(event);
+
+    const writtenEvent = setDocMock.mock.calls[0][1];
+    expect(writtenEvent).not.toHaveProperty("description");
+    expect(writtenEvent.criteria[0]).not.toHaveProperty("description");
+  });
+
   it("creates teacher QR users as judges", async () => {
     getDocMock.mockResolvedValue({
       exists: () => false
@@ -218,6 +265,15 @@ describe("Firebase helpers", () => {
       hd: "soongsil.net",
       prompt: "select_account"
     });
+  });
+
+  it("skips App Check initialization when no site key is configured", async () => {
+    vi.stubEnv("NEXT_PUBLIC_FIREBASE_APP_CHECK_SITE_KEY", "");
+
+    await expect(firebase.initializeFirebaseAppCheck()).resolves.toBeUndefined();
+
+    expect(initializeAppCheckMock).not.toHaveBeenCalled();
+    expect(appCheckProviderMock).not.toHaveBeenCalled();
   });
 
   it("signs in teacher QR users anonymously", async () => {

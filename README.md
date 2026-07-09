@@ -29,6 +29,9 @@ A judges-first, real-time hackathon and pitch grading platform built with Next.j
    npm run dev
    ```
 
+   On Windows, `run-app.bat` starts the app without the local developer demo account.
+   Use `run-app-local-dev.bat` only when you intentionally want the local developer demo account.
+
 ## Firebase env vars
 
 - `NEXT_PUBLIC_FIREBASE_API_KEY`

@@ -5,6 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { buildParticipantTemplateCsv, buildStandingsCsv, parseParticipantsCsv } from "@/lib/export";
 import {
   assertAuthorizedAppUser,
+  createNewUserRecord,
   deleteFirebaseParticipant,
   getFirebaseErrorMessage,
   isFirebaseConfigured,
@@ -178,6 +179,12 @@ function buildTeacherQrLoginUrl(eventId: string, teacherName: string) {
   return url.toString();
 }
 
+function canUseLocalDemoAccount() {
+  if (typeof window === "undefined") return false;
+  if (process.env.NEXT_PUBLIC_LOCAL_DEV_MODE !== "1") return false;
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
 export function AppShell({ initialUser }: AppShellProps) {
   const firebaseAvailable = isFirebaseConfigured();
   const demoDeveloper = demoUsers.find((user) => normalizeRole(user.role) === "developer") ?? null;
@@ -188,8 +195,8 @@ export function AppShell({ initialUser }: AppShellProps) {
   const [translationSearch, setTranslationSearch] = useState("");
   const [hasLoadedBrowserPreferences, setHasLoadedBrowserPreferences] = useState(false);
   const copy = getAppCopy(language, translationOverrides[language]);
-  const [authUser, setAuthUser] = useState<User | null>(initialUser === undefined && !firebaseAvailable ? demoDeveloper : initialUser ?? null);
-  const [authStatus, setAuthStatus] = useState<string>(firebaseAvailable ? copy.checkingSession : copy.demoMode);
+  const [authUser, setAuthUser] = useState<User | null>(initialUser ?? null);
+  const [authStatus, setAuthStatus] = useState<string>(firebaseAvailable ? copy.checkingSession : copy.signedOut);
   const [authError, setAuthError] = useState("");
   const [users, setUsers] = useState<User[]>(demoUsers);
   const [events, setEvents] = useState<Event[]>(initialEvents);
@@ -240,6 +247,21 @@ export function AppShell({ initialUser }: AppShellProps) {
     setTranslationOverrides(loadTranslationOverrides());
     setHasLoadedBrowserPreferences(true);
   }, []);
+
+  useEffect(() => {
+    if (firebaseAvailable || initialUser !== undefined) return;
+
+    if (canUseLocalDemoAccount()) {
+      setAuthUser(demoDeveloper);
+      setSection("developer");
+      setAuthStatus(copy.demoMode);
+      return;
+    }
+
+    setAuthUser(null);
+    setSection("standings");
+    setAuthStatus(copy.signedOut);
+  }, [copy.demoMode, copy.signedOut, demoDeveloper, firebaseAvailable, initialUser]);
 
   useEffect(() => {
     if (typeof document !== "undefined") {
@@ -295,10 +317,14 @@ export function AppShell({ initialUser }: AppShellProps) {
       try {
         assertAuthorizedAppUser(firebaseUser);
         const teacherQrRequest = getTeacherQrRequest();
+        let profileSyncError = "";
         const persistedUser = firebaseUser.isAnonymous
           ? await completeTeacherQrSignIn(firebaseUser, teacherQrRequest?.teacherName)
-          : await upsertAuthenticatedUser(firebaseUser);
-        setAuthError("");
+          : await upsertAuthenticatedUser(firebaseUser).catch((error) => {
+              profileSyncError = getFirebaseErrorMessage(error);
+              return createNewUserRecord(firebaseUser);
+            });
+        setAuthError(profileSyncError);
         setAuthUser(persistedUser);
         setUsers((current) => {
           const withoutUser = current.filter((user) => user.uid !== persistedUser.uid);
@@ -803,7 +829,11 @@ export function AppShell({ initialUser }: AppShellProps) {
     setAuthError("");
     try {
       const firebaseUser = await signInWithGoogle();
-      const persistedUser = await upsertAuthenticatedUser(firebaseUser);
+      const persistedUser = await upsertAuthenticatedUser(firebaseUser).catch((error) => {
+        const fallbackUser = createNewUserRecord(firebaseUser);
+        setAuthError(getFirebaseErrorMessage(error));
+        return fallbackUser;
+      });
       setAuthUser(persistedUser);
       setUsers((current) => {
         const withoutUser = current.filter((user) => user.uid !== persistedUser.uid);
@@ -822,9 +852,10 @@ export function AppShell({ initialUser }: AppShellProps) {
     if (firebaseAvailable) {
       await signOutOfGoogle();
     }
-    setAuthUser(firebaseAvailable ? null : demoDeveloper);
-    setSection(firebaseAvailable ? "standings" : "developer");
-    setAuthStatus(firebaseAvailable ? copy.signedOut : copy.demoMode);
+    const useLocalDemo = !firebaseAvailable && canUseLocalDemoAccount();
+    setAuthUser(useLocalDemo ? demoDeveloper : null);
+    setSection(useLocalDemo ? "developer" : "standings");
+    setAuthStatus(useLocalDemo ? copy.demoMode : copy.signedOut);
   };
 
   return (
@@ -861,7 +892,7 @@ export function AppShell({ initialUser }: AppShellProps) {
             <div className="criterion-card">
               <div className="section-header">
                 <div>
-                  <h2>{authUser?.displayName ?? copy.demoSession}</h2>
+                  <h2>{authUser?.displayName ?? (firebaseAvailable ? copy.signedOut : copy.firebaseSetupRequired)}</h2>
                   <p>{authUser?.email ?? authStatus}</p>
                 </div>
                 <span className={`badge ${firebaseAvailable ? "emerald" : "amber"}`}>{firebaseAvailable ? copy.firebase : copy.local}</span>
@@ -869,8 +900,8 @@ export function AppShell({ initialUser }: AppShellProps) {
               {authError ? <div className="footer-note">{authError}</div> : null}
               {teacherQrMessage ? <div className="footer-note">{teacherQrMessage}</div> : null}
               <div className="button-row">
-                {!authUser ? (
-                  <button className="button" onClick={handleSignIn} disabled={!firebaseAvailable}>
+                {!authUser && firebaseAvailable ? (
+                  <button className="button" onClick={handleSignIn}>
                     {copy.signIn}
                   </button>
                 ) : null}
@@ -881,9 +912,8 @@ export function AppShell({ initialUser }: AppShellProps) {
                 ) : null}
               </div>
               <div className="footer-note">
-                {authUser ? copy.signedInNotice : copy.signInNotice}
+                {!firebaseAvailable ? copy.firebaseMissing : authUser ? copy.signedInNotice : copy.signInNotice}
               </div>
-              {!firebaseAvailable ? <div className="footer-note">{copy.firebaseMissing}</div> : null}
               <div className="field" style={{ marginTop: 12 }}>
                 <label className="label" htmlFor="language-select">
                   {copy.language}

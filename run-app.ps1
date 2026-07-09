@@ -1,3 +1,7 @@
+param(
+  [switch]$LocalDev
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -25,6 +29,15 @@ try {
   }
   else {
     Write-Host "No duplicate app processes found."
+  }
+
+  if ($LocalDev) {
+    $env:NEXT_PUBLIC_LOCAL_DEV_MODE = "1"
+    Write-Host "Local developer demo mode: enabled"
+  }
+  else {
+    $env:NEXT_PUBLIC_LOCAL_DEV_MODE = "0"
+    Write-Host "Local developer demo mode: disabled"
   }
 
   npm run dev
