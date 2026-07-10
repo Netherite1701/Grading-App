@@ -86,6 +86,13 @@ describe("Firebase deployment contract", () => {
     expect(rules).toContain('request.resource.data.role == "judge"');
   });
 
+  it("allows QR scorecards to use a logical judge ID owned by the auth UID", () => {
+    const rules = readWorkspaceFile("firestore.rules");
+
+    expect(rules).toContain("request.resource.data.judgeId == request.auth.uid");
+    expect(rules).toContain("request.resource.data.authUid == request.auth.uid");
+  });
+
   it("stores published translation overrides in appConfig/translations", () => {
     const rules = readWorkspaceFile("firestore.rules");
 

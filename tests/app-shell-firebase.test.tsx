@@ -4,7 +4,16 @@ import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Role, StoredRole, User } from "@/lib/types";
 
-const firebaseUser = {
+interface FirebaseTestUser {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+  emailVerified: boolean;
+  isAnonymous: boolean;
+}
+
+const firebaseUser: FirebaseTestUser = {
   uid: "firebase-user-1",
   email: "firebase@soongsil.net",
   displayName: "Firebase User",
@@ -15,8 +24,8 @@ const firebaseUser = {
 
 const guestUser: User = {
   uid: firebaseUser.uid,
-  email: firebaseUser.email,
-  displayName: firebaseUser.displayName,
+  email: firebaseUser.email ?? "",
+  displayName: firebaseUser.displayName ?? undefined,
   role: "guest",
   createdAt: "2026-07-01T00:00:00.000Z"
 };
@@ -29,9 +38,10 @@ const organizerUser: User = {
 
 const firebaseHarness = vi.hoisted(() => ({
   appDataListener: undefined as ((data: unknown) => void) | undefined,
-  authStateUser: undefined as typeof firebaseUser | null | undefined,
+  authStateUser: undefined as FirebaseTestUser | null | undefined,
   assertAuthorizedAppUser: vi.fn(),
   saveFirebaseEvent: vi.fn(),
+  saveFirebaseScorecard: vi.fn(),
   saveFirebaseTranslationOverrides: vi.fn(),
   signInWithTeacherQr: vi.fn(),
   signOutOfGoogle: vi.fn(),
@@ -40,7 +50,7 @@ const firebaseHarness = vi.hoisted(() => ({
 
 vi.mock("@/lib/firebase", () => ({
   assertAuthorizedAppUser: firebaseHarness.assertAuthorizedAppUser,
-  createNewUserRecord: (user: typeof firebaseUser) => ({
+  createNewUserRecord: (user: FirebaseTestUser) => ({
     uid: user.uid,
     email: user.email ?? "",
     displayName: user.displayName ?? undefined,
@@ -58,13 +68,13 @@ vi.mock("@/lib/firebase", () => ({
     if (normalizedRole === "judge" || normalizedRole === "organizer" || normalizedRole === "developer" || normalizedRole === "guest") return normalizedRole;
     return "guest";
   },
-  onFirebaseUserChanged: vi.fn(async (callback: (user: typeof firebaseUser | null) => void) => {
+  onFirebaseUserChanged: vi.fn(async (callback: (user: FirebaseTestUser | null) => void) => {
     void callback(firebaseHarness.authStateUser === undefined ? firebaseUser : firebaseHarness.authStateUser);
     return vi.fn();
   }),
   saveFirebaseEvent: firebaseHarness.saveFirebaseEvent,
   saveFirebaseParticipant: vi.fn(),
-  saveFirebaseScorecard: vi.fn(),
+  saveFirebaseScorecard: firebaseHarness.saveFirebaseScorecard,
   saveFirebaseTranslationOverrides: firebaseHarness.saveFirebaseTranslationOverrides,
   signInWithGoogle: vi.fn(async () => firebaseUser),
   signInWithTeacherQr: firebaseHarness.signInWithTeacherQr,
@@ -82,7 +92,7 @@ vi.mock("@/lib/firebase", () => ({
   }),
   updateFirebaseUserRole: vi.fn(),
   upsertAuthenticatedUser: firebaseHarness.upsertAuthenticatedUser,
-  upsertTeacherQrUser: vi.fn(async (user: typeof firebaseUser, profile: { displayName?: string }) => ({
+  upsertTeacherQrUser: vi.fn(async (user: FirebaseTestUser, profile: { displayName?: string }) => ({
     uid: user.uid,
     email: "",
     displayName: profile.displayName || "Teacher Judge",
@@ -98,6 +108,8 @@ describe("AppShell Firebase role sync", () => {
     firebaseHarness.assertAuthorizedAppUser.mockReset();
     firebaseHarness.saveFirebaseEvent.mockReset();
     firebaseHarness.saveFirebaseEvent.mockResolvedValue(undefined);
+    firebaseHarness.saveFirebaseScorecard.mockReset();
+    firebaseHarness.saveFirebaseScorecard.mockResolvedValue(undefined);
     firebaseHarness.saveFirebaseTranslationOverrides.mockReset();
     firebaseHarness.saveFirebaseTranslationOverrides.mockResolvedValue(undefined);
     firebaseHarness.signInWithTeacherQr.mockReset();
@@ -222,6 +234,7 @@ describe("AppShell Firebase role sync", () => {
     expect(qrUrl.searchParams.get("teacherQr")).toBe("1");
     expect(qrUrl.searchParams.get("eventId")).toBe("launchpad-2026");
     expect(qrUrl.searchParams.get("teacherName")).toBe("Professor Kim");
+    expect(qrUrl.searchParams.get("judgeKey")).toMatch(/^qr-/);
     expect(screen.getByLabelText("Teacher QR login")).toBeInTheDocument();
   });
 
@@ -246,6 +259,77 @@ describe("AppShell Firebase role sync", () => {
     fireEvent.click(sessionSummary);
     expect(sessionPanel.open).toBe(true);
     expect(await screen.findByRole("heading", { name: "Professor Kim" })).toBeInTheDocument();
+  });
+
+  it("does not restore anonymous QR sessions as judges on non-QR URLs", async () => {
+    firebaseHarness.authStateUser = {
+      uid: "teacher-qr-previous",
+      email: null,
+      displayName: null,
+      photoURL: null,
+      emailVerified: false,
+      isAnonymous: true
+    };
+    const { AppShell } = await import("@/components/app-shell");
+
+    render(<AppShell />);
+
+    expect(await screen.findByRole("button", { name: "Sign in with Google" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Judge workspace" })).not.toBeInTheDocument();
+    expect(firebaseHarness.signOutOfGoogle).toHaveBeenCalled();
+  });
+
+  it("keeps separate QR judge scorecards isolated even when they share one anonymous auth UID", async () => {
+    const sharedAnonymousUser = {
+      uid: "shared-anon-uid",
+      email: null,
+      displayName: null,
+      photoURL: null,
+      emailVerified: false,
+      isAnonymous: true
+    };
+    const user = userEvent.setup();
+    const { AppShell } = await import("@/components/app-shell");
+
+    firebaseHarness.authStateUser = sharedAnonymousUser;
+    firebaseHarness.signInWithTeacherQr.mockResolvedValue(sharedAnonymousUser);
+    window.history.pushState({}, "", `/?teacherQr=1&eventId=launchpad-2026&teacherName=${encodeURIComponent("심사1")}&judgeKey=qr-judge-1`);
+    const firstRender = render(<AppShell />);
+
+    await screen.findByRole("heading", { name: "Judge workspace" });
+    await user.click(screen.getByRole("button", { name: "Team Helios" }));
+    await user.click(screen.getByRole("button", { name: "Innovation grade E" }));
+
+    await waitFor(() => {
+      expect(firebaseHarness.saveFirebaseScorecard).toHaveBeenCalledWith(expect.objectContaining({
+        id: "launchpad-2026_qr-judge-1_helios",
+        eventId: "launchpad-2026",
+        participantId: "helios",
+        judgeId: "qr-judge-1",
+        authUid: "shared-anon-uid",
+        judgeName: "심사1"
+      }));
+    });
+
+    firstRender.unmount();
+    firebaseHarness.saveFirebaseScorecard.mockClear();
+    window.history.pushState({}, "", `/?teacherQr=1&eventId=launchpad-2026&teacherName=${encodeURIComponent("심사2")}&judgeKey=qr-judge-2`);
+    render(<AppShell />);
+
+    await screen.findByRole("heading", { name: "Judge workspace" });
+    await user.click(screen.getByRole("button", { name: "Team Helios" }));
+    await user.click(screen.getByRole("button", { name: "Innovation grade A" }));
+
+    await waitFor(() => {
+      expect(firebaseHarness.saveFirebaseScorecard).toHaveBeenCalledWith(expect.objectContaining({
+        id: "launchpad-2026_qr-judge-2_helios",
+        eventId: "launchpad-2026",
+        participantId: "helios",
+        judgeId: "qr-judge-2",
+        authUid: "shared-anon-uid",
+        judgeName: "심사2"
+      }));
+    });
   });
 
   it("publishes translation overrides to Firebase", async () => {

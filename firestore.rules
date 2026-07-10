@@ -6,7 +6,7 @@ service cloud.firestore {
     // - users/{uid}: uid, email, displayName?, photoURL?, role, createdAt, updatedAt?
     // - events/{eventId}: event setup, owner metadata, criteria, status, timestamps
     // - participants/{participantId}: team/project metadata plus eventId
-    // - scorecards/{scorecardId}: judgeId, participantId, eventId, scores, totalScore
+    // - scorecards/{scorecardId}: judgeId, authUid?, participantId, eventId, scores, totalScore
     // - appConfig/translations: published UI translation overrides
 
     function signedIn() {
@@ -122,7 +122,10 @@ service cloud.firestore {
     match /scorecards/{scorecardId} {
       allow read: if canAccessApp();
       allow create, update: if isJudge()
-        && request.resource.data.judgeId == request.auth.uid;
+        && (
+          request.resource.data.judgeId == request.auth.uid
+          || request.resource.data.authUid == request.auth.uid
+        );
       allow delete: if isDeveloper();
     }
 

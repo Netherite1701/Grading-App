@@ -170,20 +170,42 @@ function getTeacherQrRequest() {
   if (typeof window === "undefined") return null;
   const params = new URLSearchParams(window.location.search);
   if (params.get("teacherQr") !== "1") return null;
+  const eventId = params.get("eventId") ?? "";
+  const teacherName = params.get("teacherName") ?? "";
 
   return {
-    eventId: params.get("eventId") ?? "",
-    teacherName: params.get("teacherName") ?? ""
+    eventId,
+    teacherName,
+    judgeKey: params.get("judgeKey") ?? buildTeacherQrJudgeKey(eventId, teacherName)
   };
 }
 
-function buildTeacherQrLoginUrl(eventId: string, teacherName: string) {
+function createTeacherQrKeySeed() {
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function stableHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function buildTeacherQrJudgeKey(eventId: string, teacherName: string, seed = "") {
+  const identity = teacherName.trim() || seed || "teacher-judge";
+  return `qr-${stableHash(`${eventId}:${identity}`)}`;
+}
+
+function buildTeacherQrLoginUrl(eventId: string, teacherName: string, seed: string) {
   if (typeof window === "undefined" || !eventId) return "";
   const url = new URL(window.location.href);
   url.search = "";
   url.hash = "";
   url.searchParams.set("teacherQr", "1");
   url.searchParams.set("eventId", eventId);
+  url.searchParams.set("judgeKey", buildTeacherQrJudgeKey(eventId, teacherName, seed));
   if (teacherName.trim()) {
     url.searchParams.set("teacherName", teacherName.trim());
   }
@@ -233,6 +255,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
   const [participantImportMessage, setParticipantImportMessage] = useState("");
   const [eventCreateMessage, setEventCreateMessage] = useState("");
   const [teacherQrName, setTeacherQrName] = useState("");
+  const [teacherQrKeySeed] = useState(createTeacherQrKeySeed);
   const [teacherQrMessage, setTeacherQrMessage] = useState("");
   const [section, setSection] = useState<SectionId>(defaultSectionForRole(normalizeRole(authUser?.role)));
   const [isJudgeSessionOpen, setJudgeSessionOpen] = useState(false);
@@ -252,10 +275,15 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
   const isJudgeOnlyExperience = isJudgeSurface || (role === "judge" && !isDeveloper);
   const activeSection = isJudgeSurface ? "judge" : isDeveloper ? section : defaultSectionForRole(role);
   const activeEvent = events.find((event) => event.id === activeEventId) ?? events[0];
-  const teacherQrLoginUrl = firebaseAvailable ? buildTeacherQrLoginUrl(activeEvent?.id ?? "", teacherQrName) : "";
+  const teacherQrLoginUrl = firebaseAvailable ? buildTeacherQrLoginUrl(activeEvent?.id ?? "", teacherQrName, teacherQrKeySeed) : "";
   const participants = participantsByEvent[activeEvent?.id ?? ""] ?? [];
   const selectedParticipant = participants.find((participant) => participant.id === selectedParticipantId);
-  const judgeId = authUser?.uid ?? "judge-1";
+  const teacherQrRequest = getTeacherQrRequest();
+  const qrJudgeId = firebaseAvailable && authUser?.email === "" ? teacherQrRequest?.judgeKey ?? "" : "";
+  const judgeId = qrJudgeId || authUser?.uid || "judge-1";
+  const judgeName = qrJudgeId ? teacherQrRequest?.teacherName.trim() || authUser?.displayName || "Teacher Judge" : authUser?.displayName ?? "Avery Chen";
+  const judgeEmail = qrJudgeId ? "" : authUser?.email ?? "judge1@hackweek.dev";
+  const scorecardAuthUid = authUser?.uid ?? judgeId;
   const existingScorecard = activeEvent && selectedParticipant ? getJudgeScorecard(activeEvent.id, selectedParticipant.id, judgeId, scorecards) : undefined;
   const [draftScores, setDraftScores] = useState<Record<string, number>>(
     existingScorecard?.scores ?? (activeEvent ? getDefaultScores(activeEvent.criteria) : {})
@@ -338,6 +366,13 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
       try {
         assertAuthorizedAppUser(firebaseUser);
         const teacherQrRequest = getTeacherQrRequest();
+        if (firebaseUser.isAnonymous && !teacherQrRequest) {
+          setAuthUser(null);
+          setSection("standings");
+          setAuthStatus(copy.signedOut);
+          await signOutOfGoogle().catch(() => undefined);
+          return;
+        }
         let profileSyncError = "";
         const persistedUser = firebaseUser.isAnonymous
           ? await completeTeacherQrSignIn(firebaseUser, teacherQrRequest?.teacherName)
@@ -464,6 +499,7 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
 
     users.forEach((user) => {
       if (normalizeRole(user.role) !== "judge") return;
+      if (!user.email && eventScorecards.some((card) => card.authUid === user.uid && card.judgeId !== user.uid)) return;
       roster.set(user.uid, {
         id: user.uid,
         name: user.displayName ?? user.email,
@@ -813,12 +849,13 @@ export function AppShell({ initialUser, surface = "console" }: AppShellProps) {
     const totalScore = calculateTotals(activeEvent, draftScores).rawScore;
     const savedDraftVersion = scoreDraftVersionRef.current;
     const nextCard: Scorecard = {
-      id: `${authUser?.uid ?? "judge-1"}_${selectedParticipant.id}`,
+      id: `${activeEvent.id}_${judgeId}_${selectedParticipant.id}`,
       eventId: activeEvent.id,
       participantId: selectedParticipant.id,
-      judgeId: authUser?.uid ?? "judge-1",
-      judgeName: authUser?.displayName ?? "Avery Chen",
-      judgeEmail: authUser?.email ?? "judge1@hackweek.dev",
+      judgeId,
+      authUid: scorecardAuthUid,
+      judgeName,
+      judgeEmail,
       scores: { ...draftScores },
       totalScore,
       notes,

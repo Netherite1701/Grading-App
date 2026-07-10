@@ -57,6 +57,7 @@ export interface Scorecard {
   eventId: string;
   participantId: string;
   judgeId: string;
+  authUid?: string;
   judgeName: string;
   judgeEmail: string;
   scores: Record<string, number>;
